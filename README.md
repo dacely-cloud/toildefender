@@ -1,8 +1,7 @@
 <div align="center">
 
-<img src="./images/toildefender-logo.svg" alt="ToilDefender" width="180" />
+<img src="./images/toildefender-logo.svg" alt="ToilDefender" width="600" />
 
-# ToilDefender
 
 ### JavaScript code protection for the Toil stack.
 

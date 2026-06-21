@@ -24,9 +24,6 @@
       <rect x="88" y="384" width="292" height="294" rx="74"/>
     </clipPath>
   </defs>
-
-  <rect width="1448" height="1086" fill="#FFFFFF"/>
-
   <g id="icon">
     <rect x="88" y="384" width="292" height="294" rx="74" fill="url(#td-icon-bg)"/>
     <path d="M88 586V458c0-41 33-74 74-74h123L88 586Z" fill="url(#td-icon-facet)" opacity="0.68" clip-path="url(#td-icon-clip)"/>
