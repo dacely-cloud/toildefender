@@ -43,6 +43,8 @@ var defaultOptions = {
     babel: false,
     babelTarget: "ie 11",
     babelPreserveAsync: true,
+    runtimeHelpers: true,
+    simplify: true,
     features: {
         dead_code: true,
         scope: true,
@@ -460,7 +462,7 @@ exports.do = function (options) {
     });
     
     // Simplify graph
-    doTask("simplify", true, () => {
+    doTask("simplify", options.simplify !== false, () => {
         var normalizer = new prNormalizer(logger);
         ast = normalizer.simplify(ast);
     });
@@ -638,7 +640,7 @@ exports.do = function (options) {
         });
     });
 
-    doTask("add_runtime_helpers", options.features.scope || options.features.object_packing || options.features.literals || options.babel === false, () => {
+    doTask("add_runtime_helpers", options.runtimeHelpers !== false && (options.features.scope || options.features.object_packing || options.features.literals || options.babel === false), () => {
         addCustomBindOnce();
     });
     
