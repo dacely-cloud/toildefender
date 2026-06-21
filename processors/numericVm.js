@@ -213,6 +213,15 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         return value;
     }
 
+    function readConstant(index) {
+        var cell = constants[index];
+        if (cell && cell[0] === 0 && typeof cell[1] === "function") {
+            cell[1] = cell[1]();
+            cell[0] = 1;
+        }
+        return cell && cell[0] === 1 ? cell[1] : cell;
+    }
+
     function read() {
         if (ip < 0 || ip >= tokenCount) throw new Error("invalid virtual opcode");
         var value = decodeAt(ip);
@@ -254,7 +263,7 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         if (op === ops[3]) { push(true); continue; }
         if (op === ops[4]) { push(false); continue; }
         if (op === ops[5]) { push(readUnsigned()); continue; }
-        if (op === ops[6]) { push(constants[readUnsigned()]); continue; }
+        if (op === ops[6]) { push(readConstant(readUnsigned())); continue; }
         if (op === ops[7]) { push(frameArgs[readUnsigned()]); continue; }
         if (op === ops[8]) { push(loadLocal(readUnsigned())); continue; }
         if (op === ops[9]) { storeLocal(readUnsigned(), pop()); continue; }
@@ -281,7 +290,7 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         if (op === ops[30]) { var jf = readSigned(); if (!pop()) ip += jf; continue; }
         if (op === ops[31]) { var jt = readSigned(); if (pop()) ip += jt; continue; }
         if (op === ops[32]) { readUnsigned(); var argc = readUnsigned(); var ca = popArgs(argc); var fn = pop(); push(fn.apply(undefined, ca)); continue; }
-        if (op === ops[33]) { readUnsigned(); var largc = readUnsigned(); var la = popArgs(largc); var lfn = constants[readUnsigned()]; push(lfn.apply(undefined, la)); continue; }
+        if (op === ops[33]) { readUnsigned(); var largc = readUnsigned(); var la = popArgs(largc); var lfn = readConstant(readUnsigned()); push(lfn.apply(undefined, la)); continue; }
         if (op === ops[34]) { var gpKey = pop(); var gpObj = pop(); push(gpObj[gpKey]); continue; }
         if (op === ops[35]) { var spValue = pop(); var spKey = pop(); var spObj = pop(); spObj[spKey] = spValue; push(spValue); continue; }
         if (op === ops[36]) { var ac = readUnsigned(); var arr = new Array(ac); var ai = ac; while (ai > 0) { ai -= 1; arr[ai] = pop(); } push(arr); continue; }
@@ -292,7 +301,7 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         if (op === ops[41]) { push(argsLike); continue; }
         if (op === ops[42]) { push(typeof pop()); continue; }
         if (op === ops[43]) { var mc = readUnsigned(); var ma = popArgs(mc); var mk = pop(); var mo = pop(); push(mo[mk].apply(mo, ma)); continue; }
-        if (op === ops[44]) { var cgpKey = constants[readUnsigned()]; var cgpObj = pop(); push(cgpObj[cgpKey]); continue; }
+        if (op === ops[44]) { var cgpKey = readConstant(readUnsigned()); var cgpObj = pop(); push(cgpObj[cgpKey]); continue; }
         if (op === ops[45]) { storeLocal(readUnsigned(), pop()); continue; }
         throw new Error("invalid virtual opcode");
     }
@@ -320,6 +329,7 @@ function unary(operator, argument) { return { type: "UnaryExpression", operator:
 function member(object, property) { return { type: "MemberExpression", object: object, property: property, computed: true }; }
 function arrayExpression(values) { return { type: "ArrayExpression", elements: values }; }
 function returnStatement(argument) { return { type: "ReturnStatement", argument: argument }; }
+function functionExpression(body) { return { type: "FunctionExpression", id: null, params: [], body: { type: "BlockStatement", body: body }, generator: false, expression: false, async: false }; }
 function functionName(node) { return node.id && node.id.name ? node.id.name : ""; }
 
 function hashSeed(seed) {
@@ -921,6 +931,12 @@ Compiler.prototype.constantExpression = function (constant) {
     if (constant.kind === "undefined") return { type: "UnaryExpression", operator: "void", prefix: true, argument: literal(0) };
     throw new Error("unsupported constant " + constant.kind);
 };
+Compiler.prototype.constantCellExpression = function (constant) {
+    return arrayExpression([
+        literal(0),
+        functionExpression([ returnStatement(this.constantExpression(constant)) ])
+    ]);
+};
 Compiler.prototype.finish = function () {
     this.fuseSuperinstructions();
     var tokens = this.assemble();
@@ -929,7 +945,7 @@ Compiler.prototype.finish = function () {
     var record = {
         base: this.dialect.base,
         blob: packTokens(encrypted.encrypted, this.dialect.base),
-        constants: this.constants.map(this.constantExpression.bind(this)),
+        constants: this.constants.map(this.constantCellExpression.bind(this)),
         opValues: opValues.map(literal),
         seed: this.dialect.seed,
         tag: encrypted.tag,

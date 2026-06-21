@@ -102,6 +102,8 @@ numeric program data consumed by a randomized virtual machine.
 The compiler also fuses selected hot stack patterns into semantic
 superinstructions, so common operation boundaries such as constant-key property
 reads are not always emitted as separate primitive VM opcodes.
+Constants are wrapped in access-bound cells, so encoded strings and references
+are decoded lazily when bytecode reads them instead of during VM call setup.
 
 Original logic disappears from the output bundle. Attackers no longer reverse
 plain JavaScript; they must recover the VM, decode the bytecode format,
@@ -199,7 +201,7 @@ protections: {
 
 The complete beautified generated output is committed at
 [docs/all-modes-output.demo.js](./docs/all-modes-output.demo.js). It is a real
-982-line artifact from the current generator and executes to:
+1015-line artifact from the current generator and executes to:
 
 Output excerpt:
 
@@ -211,7 +213,7 @@ Output excerpt:
     var c = arguments;
     while (true) try {
       switch (f) {
-        case 27088:
+        case 18274:
           b[11] = c[11];
           b[12] = c[10];
           b[13] = c[9];
@@ -222,42 +224,43 @@ Output excerpt:
           b[18] = c[4];
           b[19] = c[3];
           b[20] = c[2];
-          b[21] = e(a, 1207, b, c[1]);
-          b[22] = e(a, 1592, b, c[1]);
-          b[23] = e(a, 32627, b, c[1]);
-          b[24] = e(a, 30059, b, c[1]);
-          b[25] = e(a, 5790, b, c[1]);
-          b[26] = e(a, 6222, b, c[1]);
-          b[27] = e(a, 13893, b, c[1]);
-          b[28] = e(a, 1517, b, c[1]);
-          b[29] = e(a, 24009, b, c[1]);
-          b[30] = e(a, 2821, b, c[1]);
-          b[31] = e(a, 2816, b, c[1]);
-          b[32] = e(a, 11532, b, c[1]);
-          b[33] = e(a, 12484, b, c[1]);
-          b[34] = e(a, 23694, b, c[1]);
-          b[35] = BigInt(b[19]);
-          b[36] = [1n];
-          b[37] = c[1][10][1];
+          b[21] = e(a, 22, b, c[1]);
+          b[22] = e(a, 13455, b, c[1]);
+          b[23] = e(a, 23551, b, c[1]);
+          b[24] = e(a, 5304, b, c[1]);
+          b[25] = e(a, 14518, b, c[1]);
+          b[26] = e(a, 16031, b, c[1]);
+          b[27] = e(a, 12999, b, c[1]);
+          b[28] = e(a, 3096, b, c[1]);
+          b[29] = e(a, 12237, b, c[1]);
+          b[30] = e(a, 20218, b, c[1]);
+          b[31] = e(a, 21222, b, c[1]);
+          b[32] = e(a, 29854, b, c[1]);
+          b[33] = e(a, 612, b, c[1]);
+          b[34] = e(a, 18182, b, c[1]);
+          b[35] = e(a, 9881, b, c[1]);
+          b[36] = BigInt(b[19]);
+          b[37] = [1n];
           b[38] = c[1][10][1];
-          if (b[11]) {
-            b[37] = c[1][4](b[11], b[19], b[18], b[17], b[16], b[12]);
-            b[38] = b[11][c[1][10][24]] >>> c[1][10][1];
-          }
           b[39] = c[1][10][1];
-          b[40] = b[17] >>> c[1][10][1];
-          while (b[39] < b[18]) {
-            b[41] = b[32](b[39]);
-            b[40] = b[33](b[40], b[41], b[39]);
-            b[39] += c[1][10][5];
+          if (b[11]) {
+            b[38] = c[1][4](b[11], b[19], b[18], b[17], b[16], b[12]);
+            b[39] = b[11][c[1][10][24]] >>> c[1][10][1];
           }
-          if (b[40] >>> c[1][10][1] !== b[16] >>> c[1][10][1]) throw new Error(c[1][10][29]);
-          b[42] = c[1][10][1];
-          b[43] = b[17] >>> c[1][10][1];
-          b[44] = b[17] & c[1][10][5];
-          b[45] = b[44] ? c[1][10][30] : [];
-          b[46] = b[44] ? c[1][10][30] : [];
-          b[47] = b[44] ? h([
+          b[40] = c[1][10][1];
+          b[41] = b[17] >>> c[1][10][1];
+          while (b[40] < b[18]) {
+            b[42] = b[33](b[40]);
+            b[41] = b[34](b[41], b[42], b[40]);
+            b[40] += c[1][10][5];
+          }
+          if (b[41] >>> c[1][10][1] !== b[16] >>> c[1][10][1]) throw new Error(c[1][10][29]);
+          b[43] = c[1][10][1];
+          b[44] = b[17] >>> c[1][10][1];
+          b[45] = b[17] & c[1][10][5];
+          b[46] = b[45] ? c[1][10][30] : [];
+          b[47] = b[45] ? c[1][10][30] : [];
+          b[48] = b[45] ? g([
             /* encoded layout keys */
           ], [
             [],
@@ -266,21 +269,20 @@ Output excerpt:
 
           /* 900+ more generated lines:
              dispatcher cases, encoded literals, streaming VM token reads,
-             seed-selected stack/local storage, BigInt program blobs,
+             lazy constant cells, seed-selected stack/local storage, BigInt program blobs,
              semantic superinstructions, randomized opcode tables,
              and Hash-Mesh unwrap */
 
-        case 30059:
+        case 5304:
           if (c[1][49] < c[2][10][1] || c[1][49] >= c[1][18]) throw new Error(c[2][10][45]);
           b[1] = c[1][30](c[1][49]);
           c[1][49] += c[2][10][5];
           return b[1];
-        case 29157:
+        case 1762:
           b[1] = '';
-          b[1] += d(86);
-          b[1] += d(101, 105, 108, 109);
-          b[1] += d(97, 114);
-          b[1] += d(107);
+          b[1] += d(86, 101, 105);
+          b[1] += d(108, 109);
+          b[1] += d(97, 114, 107);
           return b[1];
       }
     } catch (a) {
@@ -291,7 +293,7 @@ Output excerpt:
       }
     }
   }
-  a(10301, {});
+  a(15312, {});
 })();
 ```
 

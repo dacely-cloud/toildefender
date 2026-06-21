@@ -329,6 +329,32 @@ test("virtual machine protection emits fused superinstructions", () => {
     assert.throws(() => run(brokenStoreLocalPop), /fused store local pop/);
 });
 
+test("virtual machine constants decode lazily at access sites", () => {
+    const hidden = "unused branch sentinel constant";
+    const code = `
+        function choose(flag) {
+            if (flag) {
+                return "${hidden}";
+            }
+            return "visible";
+        }
+        globalThis.__result = choose(false);
+    `;
+    const activeCode = code.replace("choose(false)", "choose(true)");
+    const marker = "    return out;\n}\nfunction veilmark$numericVmPow";
+    const guard = "    if (out === " + JSON.stringify(hidden) + ") throw new Error(\"unused constant decoded\");\n    return out;\n}\nfunction veilmark$numericVmPow";
+    const defended = defendVmCode(code);
+    const activeDefended = defendVmCode(activeCode);
+    const guarded = defended.replace(marker, guard);
+    const activeGuarded = activeDefended.replace(marker, guard);
+
+    assert.notEqual(guarded, defended);
+    assert.notEqual(activeGuarded, activeDefended);
+    assert.match(defended, /function readConstant/);
+    assert.deepEqual(run(guarded), run(code));
+    assert.throws(() => run(activeGuarded), /unused constant decoded/);
+});
+
 test("virtual machine protection preserves loops, method calls, arrays, and objects", () => {
     const code = `
         function check(input) {
