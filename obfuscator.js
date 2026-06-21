@@ -76,6 +76,14 @@ var defaultOptions = {
         },
         virtualize: "marked"
     },
+    controlFlow: {
+        ratio: 1,
+        seed: "toildefender-control-flow"
+    },
+    scope: {
+        ratio: 1,
+        seed: "toildefender-scope"
+    },
     protections: {
         virtualMachine: {
             bigintBytecode: true,
@@ -110,6 +118,25 @@ var featureDeps = {
     literals: [ "scope", "mangle" ],
     compress: [ "mangle" ]
 };
+
+function isNumericVmInternalNode(node) {
+    return node && node.veilmark$numericVmInternal === true;
+}
+
+function takeNumericVmInternalStatements(ast) {
+    if (!ast || ast.type != "Program") {
+        return [];
+    }
+    var retained = [];
+    ast.body = ast.body.filter(statement => {
+        if (isNumericVmInternalNode(statement)) {
+            retained.push(statement);
+            return false;
+        }
+        return true;
+    });
+    return retained;
+}
 
 var featureDescs = {
     dead_code: {
@@ -365,7 +392,7 @@ exports.do = function (options) {
     }
 
     function hasMangleUnsupportedSyntax(root) {
-        return containsNodeType(root, [ "Super" ]);
+        return false;
     }
 
     function dispatcherForMethod(method) {
@@ -379,6 +406,35 @@ exports.do = function (options) {
             return "main$generator";
         }
         return "main";
+    }
+
+    function normalizeRatio(value) {
+        var ratio = Number(value);
+        if (!Number.isFinite(ratio)) {
+            return 1;
+        }
+        if (ratio < 0) {
+            return 0;
+        }
+        if (ratio > 1) {
+            return 1;
+        }
+        return ratio;
+    }
+
+    function hashString32(value) {
+        var h = 0x811c9dc5;
+        for (var i = 0; i < value.length; i += 1) {
+            h ^= value.charCodeAt(i);
+            h = Math.imul(h, 0x01000193) >>> 0;
+        }
+        return h >>> 0;
+    }
+
+    function methodControlFlowScore(method, index) {
+        var name = method && method.id && method.id.name || "";
+        var seed = options.controlFlow && options.controlFlow.seed || "";
+        return hashString32(`${seed}:${index}:${name}`) / 0x100000000;
     }
     
     options = _.merge({}, defaultOptions, options); // first argument gets mutated
@@ -407,10 +463,18 @@ exports.do = function (options) {
     } else {
         options.features = options.forceFeatures;
     }
+    var controlFlowRatio = normalizeRatio(options.controlFlow && options.controlFlow.ratio);
+    var controlFlowActive = options.features.control_flow && controlFlowRatio > 0;
+    var scopeRatio = normalizeRatio(options.scope && options.scope.ratio);
     
     var parseOptions = {};
     var scopeOptions = {
         optimistic: true // required or things in the global scope just get lost
+    };
+    var lexicalScopeOptions = {
+        ecmaVersion: 6,
+        optimistic: true,
+        sourceType: "script"
     };
     
     var logger = new Logger(options.logAdapter);
@@ -504,13 +568,17 @@ exports.do = function (options) {
             var variables = new prVariables(logger);
             variables.removeFunctionExpressionIds(ast);
             variables.functionDeclarationToExpression(ast, escope.analyze(ast, scopeOptions));
-            variables.obfuscateIdentifiers(ast, escope.analyze(ast, scopeOptions));
+            variables.obfuscateIdentifiers(ast, escope.analyze(ast, lexicalScopeOptions));
             variables.redefineParameters(ast, escope.analyze(ast, scopeOptions));
         });
         
         // Move identifiers into scope objects
         doTask("create_scope_objects", true, () => {
-            scopes.createScopeObjects(ast, escope.analyze(ast, scopeOptions));
+            scopes.createScopeObjects(ast, escope.analyze(ast, lexicalScopeOptions), {
+                ratio: scopeRatio,
+                seed: options.scope && options.scope.seed || "toildefender-scope",
+                forceProgram: controlFlowActive
+            });
         });
         
         // Calculate entry points for all methods
@@ -526,7 +594,7 @@ exports.do = function (options) {
         // Extract function declarations and expressions
         var fns;
         doTask("extract_methods", true, () => {
-            var scopeManager = escope.analyze(ast, scopeOptions);
+            var scopeManager = escope.analyze(ast, lexicalScopeOptions);
             fns = methods.extractMethods(ast);
             fns = fns.map(method => {
                 var refers = methods.methodRefersToArguments(method, scopeManager);
@@ -538,15 +606,25 @@ exports.do = function (options) {
                     methodEntryPoints[method.id.name].dispatcher = dispatcherForMethod(method);
                 }
             });
-            if (options.features.control_flow) {
-                methods.replaceFunctionCalls(ast, methodEntryPoints);
+            var selectedMethodEntryPoints = {};
+            fns.forEach((method, index) => {
+                if (!method || !method.id || !methodEntryPoints[method.id.name]) {
+                    return;
+                }
+                if (controlFlowRatio >= 1 || methodControlFlowScore(method, index) < controlFlowRatio) {
+                    selectedMethodEntryPoints[method.id.name] = methodEntryPoints[method.id.name];
+                }
+            });
+
+            if (controlFlowActive) {
+                methods.replaceFunctionCalls(ast, selectedMethodEntryPoints);
                 fns.forEach(method => {
-                    methods.replaceFunctionCalls(method.body, methodEntryPoints);
+                    methods.replaceFunctionCalls(method.body, selectedMethodEntryPoints);
                 });
             }
         });
         
-        doTask("control_flow", options.features.control_flow, () => {
+        doTask("control_flow", controlFlowActive, () => {
             // Apply control flow flattening and merge methods
             var flattener = new prFlattener(logger, rng);
             var entry = rng.get(), exit = rng.get();
@@ -566,8 +644,15 @@ exports.do = function (options) {
                 }
             };
             var syncFns = [];
+            var retainedFns = [];
+            var retainedInternalFns = takeNumericVmInternalStatements(ast);
 
-            fns.forEach(method => {
+            fns.forEach((method, index) => {
+                var selected = controlFlowRatio >= 1 || methodControlFlowScore(method, index) < controlFlowRatio;
+                if (!selected) {
+                    retainedFns.push(method);
+                    return;
+                }
                 var dispatcher = dispatcherForMethod(method);
                 if (dispatcher == "main") {
                     syncFns.push(method);
@@ -623,19 +708,23 @@ exports.do = function (options) {
             if (asyncPrograms.length > 0) {
                 ast = {
                     type: "Program",
-                    body: Array.prototype.concat.apply([], asyncPrograms.map(program => program.body)).concat(syncAst.body)
+                    body: retainedInternalFns.concat(retainedFns).concat(Array.prototype.concat.apply([], asyncPrograms.map(program => program.body)).concat(syncAst.body))
                 };
             } else {
-                ast = syncAst;
+                ast = {
+                    type: "Program",
+                    body: retainedInternalFns.concat(retainedFns).concat(syncAst.body)
+                };
             }
         })
         .otherwise(() => {
+            var retainedInternalFns = takeNumericVmInternalStatements(ast);
             if (ast.type == "Program") {
                 ast.type = "BlockStatement";
             }
             ast = {
                 type: "Program",
-                body: fns.concat([ ast ])
+                body: retainedInternalFns.concat(fns).concat([ ast ])
             };
         });
     });

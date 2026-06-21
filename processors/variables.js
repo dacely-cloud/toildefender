@@ -77,6 +77,24 @@ function isClassMethodScope(scope) {
     return false;
 }
 
+function isNumericVmInternalNode(node) {
+    while (node) {
+        if (node.veilmark$numericVmInternal === true) {
+            return true;
+        }
+        node = node.veilmark$parent;
+    }
+    return false;
+}
+
+function isNumericVmInternalScope(scope) {
+    return isNumericVmInternalNode(scope && scope.block);
+}
+
+function isNumericVmInternalVariable(variable) {
+    return variable.defs.some(def => isNumericVmInternalNode(def.node));
+}
+
 module.exports = class Variables {
 
     constructor (logger) {
@@ -93,6 +111,9 @@ module.exports = class Variables {
      */
     removeFunctionExpressionIds (ast) {
         return traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalNode(node)) {
+                return node;
+            }
             if (node.type == "FunctionExpression" && node.id && !functionExpressionUsesOwnName(node)) {
                 node.id = null;
             }
@@ -114,7 +135,7 @@ module.exports = class Variables {
         this.esutils.setParentsRecursive(ast);
         
         scopeManager.scopes.forEach(scope => {
-            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope)) {
+            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
             scope.variables.forEach(variable => {
@@ -127,7 +148,7 @@ module.exports = class Variables {
                          * as a FunctionExpression with an id, which are then
                          * mistakingly replaced with EmptyStatements.
                          */
-                        if (estest.isStatement(def.node)) {
+                        if (estest.isStatement(def.node) && !isNumericVmInternalNode(def.node)) {
                             this.esutils.replaceNode(ast, def.node, { type: "EmptyStatement" });
                             this.esutils.insertIntoScope(scope, {
                                 type: "VariableDeclaration",
@@ -142,7 +163,8 @@ module.exports = class Variables {
                                             body: def.node.body,
                                             generator: def.node.generator === true,
                                             expression: def.node.expression === true,
-                                            async: def.node.async === true
+                                            async: def.node.async === true,
+                                            veilmark$numericVmInternal: def.node.veilmark$numericVmInternal === true
                                         }
                                     }
                                 ]
@@ -163,8 +185,22 @@ module.exports = class Variables {
      * @param {ScopeManager} scopeManager Scope manager
      */
     obfuscateIdentifiers (ast, scopeManager) {
+        var usedNames = new Set();
+
+        function uniqueName(variable) {
+            var base = "$$var$" + utils.hash(variable);
+            var name = base + "$" + variable.name;
+            var counter = 0;
+            while (usedNames.has(name)) {
+                counter += 1;
+                name = base + counter.toString(36) + "$" + variable.name;
+            }
+            usedNames.add(name);
+            return name;
+        }
+
         scopeManager.scopes.forEach(scope => {
-            if (isClassMethodScope(scope)) {
+            if (isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
             if (scope.isStatic()) {
@@ -179,7 +215,11 @@ module.exports = class Variables {
                 });
 
                 for (let variable of scope.variables) {
-                    var name = "$$var$" + utils.hash(variable) + "$" + variable.name;
+                    if (isNumericVmInternalVariable(variable)) {
+                        continue;
+                    }
+
+                    var name = uniqueName(variable);
 
                     if (variable.defs.some(def => def.type == "ClassName")) {
                         continue;
@@ -199,7 +239,7 @@ module.exports = class Variables {
                         def.name = name;
                     }
 
-                    for (let ref of variable.references) {
+                    for (let ref of variable.references.filter(ref => ref.resolved === variable)) {
                         // change reference's name
                         ref.identifier.name = name;
                     }
@@ -236,10 +276,13 @@ module.exports = class Variables {
         var rng = new utils.UniqueRandomAlpha(3);
         
         scopeManager.scopes.forEach(scope => {
-            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope)) {
+            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
             scope.variables.forEach(variable => {
+                if (isNumericVmInternalVariable(variable)) {
+                    return;
+                }
                 variable.defs.forEach(def => {
                     if (def.type == "Parameter") {
                         assert(def.name.type == "Identifier");

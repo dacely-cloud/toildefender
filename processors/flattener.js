@@ -777,7 +777,60 @@ module.exports = class Flattener {
      * @returns {Node}
      */
     unifyPrefixStatements (ast) {
+        var scopeObjects = new Map();
         var maximumScopeIndex = 0;
+
+        function scopeNameFromReference(node) {
+            if (
+                node &&
+                node.type == "MemberExpression" &&
+                node.object &&
+                node.object.type == "Identifier" &&
+                _.startsWith(node.object.name, "$$scope") &&
+                node.property &&
+                node.property.type == "Literal" &&
+                typeof node.property.value == "number"
+            ) {
+                return node.object.name;
+            }
+            return null;
+        }
+
+        function ensureScopeObject(name) {
+            if (!scopeObjects.has(name)) {
+                scopeObjects.set(name, {
+                    max: -1,
+                    offset: 0
+                });
+            }
+            return scopeObjects.get(name);
+        }
+
+        traverser.traverse(ast, [], (node, stack) => {
+            if (node.veilmark$scopeObject) {
+                var declaration = node.declarations && node.declarations[0];
+                if (declaration && declaration.id && declaration.id.type == "Identifier") {
+                    ensureScopeObject(declaration.id.name);
+                }
+            } else if (node.veilmark$scopeObjectReference) {
+                var name = scopeNameFromReference(node);
+                if (name) {
+                    var info = ensureScopeObject(name);
+                    info.max = Math.max(info.max, node.property.value);
+                }
+            }
+            return node;
+        });
+
+        if (scopeObjects.size > 1) {
+            return ast;
+        }
+
+        var nextScopeOffset = 0;
+        scopeObjects.forEach(info => {
+            info.offset = nextScopeOffset;
+            nextScopeOffset += info.max + 1;
+        });
         
         ast = traverser.traverse(ast, [], (node, stack) => {
             if (node.veilmark$reassigningArguments && !node.veilmark$followsSlicingArguments) {
@@ -785,8 +838,20 @@ module.exports = class Flattener {
             } else if (node.veilmark$scopeObject) {
                 node = { type: "EmptyStatement" };
             } else if (node.veilmark$scopeObjectReference) {
-                maximumScopeIndex = Math.max(maximumScopeIndex, node.property.value);
+                var name = scopeNameFromReference(node);
+                var info = name ? scopeObjects.get(name) : null;
+                if (info) {
+                    node.property.value += info.offset;
+                    maximumScopeIndex = Math.max(maximumScopeIndex, node.property.value);
+                }
+                if (node.object && node.object.type == "Identifier") {
+                    node.object.name = "$$unifiedScope";
+                }
             } else if (node.type == "Identifier" && _.startsWith(node.name, "$$scope")) {
+                var parent = stack[1] && stack[1].node;
+                if (parent && parent.veilmark$scopeObjectReference) {
+                    return node;
+                }
                 node.name = "$$unifiedScope";
             }
             return node;

@@ -51,6 +51,18 @@ var RESERVED_WORDS = new Set([
     "undefined"
 ]);
 
+var VM_RUNTIME_NAMES = new Set([
+    "veilmark$numericVmString",
+    "veilmark$numericVmPow",
+    "veilmark$numericVmDigit",
+    "veilmark$hashMeshMix",
+    "veilmark$hashMeshValue",
+    "veilmark$hashMeshKey",
+    "veilmark$hashMeshStream",
+    "veilmark$hashMeshUnlock",
+    "veilmark$numericVmRun"
+]);
+
 var FIRST_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
 var REST_CHARS = FIRST_CHARS + "0123456789";
 
@@ -85,6 +97,12 @@ function isRenamableVariable(scope, variable) {
     if (scope.type == "global") {
         return false;
     }
+    if (VM_RUNTIME_NAMES.has(variable.name)) {
+        return false;
+    }
+    if (variable.defs && variable.defs.some(def => def.node && def.node.veilmark$numericVmInternal === true)) {
+        return false;
+    }
     if (variable.name == "arguments" || variable.name == "undefined") {
         return false;
     }
@@ -102,6 +120,7 @@ function isRenamableVariable(scope, variable) {
 
 function reserveUnrenamedNames(scopeManager, renamable) {
     var reserved = new Set(RESERVED_WORDS);
+    VM_RUNTIME_NAMES.forEach(name => reserved.add(name));
     scopeManager.scopes.forEach(scope => {
         scope.variables.forEach(variable => {
             if (!renamable.has(variable)) {

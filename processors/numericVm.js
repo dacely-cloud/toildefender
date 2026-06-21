@@ -11,9 +11,10 @@ var RUNTIME = `
 function veilmark$numericVmString(program, length, salt) {
     var out = "";
     var i = 0;
+    var base = BigInt(65537);
     while (i < length) {
-        var encoded = Number(program % BigInt(65537));
-        program = program / BigInt(65537);
+        var encoded = Number(program % base);
+        program = program / base;
         out += String.fromCharCode(encoded ^ ((salt + i * 97) & 65535));
         i += 1;
     }
@@ -107,17 +108,25 @@ function veilmark$hashMeshUnlock(program, base, baseBig, index, key, salt, power
     return (cipher - veilmark$hashMeshStream(key, index, base, salt) + base) % base;
 }
 
-function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, argsLike, self, ops, mesh) {
+function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, argsLike, self, ops, mesh, refs, cache) {
     var baseBig = BigInt(base);
-    var digitPowers = [BigInt(1)];
     var meshKey = 0;
     var meshSalt = 0;
     if (mesh) {
         meshKey = veilmark$hashMeshKey(mesh, base, tokenCount, seed, tag, ops);
         meshSalt = mesh[5] >>> 0;
     }
+    var encryptedCache = cache && cache[0] || null;
+    var stateCache = [seed >>> 0];
+    var plainCache = new Array(tokenCount);
+    var inverseCache = cache && cache[1] || null;
+    if (inverseCache === null) {
+        inverseCache = [];
+        if (cache) cache[1] = inverseCache;
+    }
 
     function inverse(value, modulo) {
+        if (inverseCache[value] !== undefined) return inverseCache[value];
         var t = 0, nt = 1;
         var r = modulo, nr = value % modulo;
         while (nr !== 0) {
@@ -129,7 +138,9 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
             r = nr;
             nr = or - q * nr;
         }
-        return t < 0 ? t + modulo : t;
+        var out = t < 0 ? t + modulo : t;
+        inverseCache[value] = out;
+        return out;
     }
 
     function mix(current, encrypted, index) {
@@ -138,9 +149,23 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         return (mixed ^ (mixed >>> 13)) >>> 0;
     }
 
+    function unpackEncrypted() {
+        if (encryptedCache !== null) return;
+        encryptedCache = new Array(tokenCount);
+        var work = program;
+        var index = 0;
+        while (index < tokenCount) {
+            var cipher = Number(work % baseBig);
+            work = work / baseBig;
+            encryptedCache[index] = mesh ? (cipher - veilmark$hashMeshStream(meshKey, index, base, meshSalt) + base) % base : cipher;
+            index += 1;
+        }
+        if (cache) cache[0] = encryptedCache;
+    }
+
     function encryptedAt(index) {
-        if (mesh) return veilmark$hashMeshUnlock(program, base, baseBig, index, meshKey, meshSalt, digitPowers);
-        return veilmark$numericVmDigit(program, baseBig, index, digitPowers);
+        unpackEncrypted();
+        return encryptedCache[index];
     }
 
     var i = 0;
@@ -148,37 +173,33 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
     while (i < tokenCount) {
         var encrypted = encryptedAt(i);
         seen = mix(seen, encrypted, i);
+        stateCache[i + 1] = seen;
         i += 1;
     }
 
     if ((seen >>> 0) !== (tag >>> 0)) throw new Error("invalid numeric vm program");
 
-    var decodeIndex = 0;
-    var decodeState = seed >>> 0;
-
     function stateBefore(index) {
-        if (index < decodeIndex) {
-            decodeIndex = 0;
-            decodeState = seed >>> 0;
+        if (stateCache[index] !== undefined) return stateCache[index];
+        var cursor = index - 1;
+        while (cursor > 0 && stateCache[cursor] === undefined) cursor -= 1;
+        var current = stateCache[cursor] === undefined ? seed >>> 0 : stateCache[cursor];
+        while (cursor < index) {
+            current = mix(current, encryptedAt(cursor), cursor);
+            cursor += 1;
+            stateCache[cursor] = current;
         }
-        while (decodeIndex < index) {
-            var skipped = encryptedAt(decodeIndex);
-            decodeState = mix(decodeState, skipped, decodeIndex);
-            decodeIndex += 1;
-        }
-        return decodeState;
+        return current;
     }
 
     function decodeAt(index) {
+        if (plainCache[index] !== undefined) return plainCache[index];
         var state = stateBefore(index);
         var encrypted = encryptedAt(index);
         var mul = 1 + ((state >>> 5) % (base - 1));
         var add = state % base;
         var plain = (((encrypted - add + base) % base) * inverse(mul, base)) % base;
-        if (index === decodeIndex) {
-            decodeState = mix(state, encrypted, index);
-            decodeIndex = index + 1;
-        }
+        plainCache[index] = plain;
         return plain;
     }
 
@@ -219,6 +240,8 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
             cell[1] = cell[1]();
             cell[0] = 1;
         }
+        if (cell && cell[0] === 2 && typeof cell[1] === "function") return cell[1]();
+        if (cell && cell[0] === 3) return refs[cell[1]];
         return cell && cell[0] === 1 ? cell[1] : cell;
     }
 
@@ -303,6 +326,8 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         if (op === ops[43]) { var mc = readUnsigned(); var ma = popArgs(mc); var mk = pop(); var mo = pop(); push(mo[mk].apply(mo, ma)); continue; }
         if (op === ops[44]) { var cgpKey = readConstant(readUnsigned()); var cgpObj = pop(); push(cgpObj[cgpKey]); continue; }
         if (op === ops[45]) { storeLocal(readUnsigned(), pop()); continue; }
+        if (op === ops[46]) { var jn = readSigned(); var nv = pop(); if (nv === null || nv === undefined) ip += jn; continue; }
+        if (op === ops[47]) { push(Number(pop())); continue; }
         throw new Error("invalid virtual opcode");
     }
 }
@@ -315,7 +340,7 @@ var OP_NAMES = [
     "STRICT_EQ", "STRICT_NEQ", "LT", "LTE", "GT", "GTE", "JMP", "JMP_FALSE",
     "JMP_TRUE", "CALL_EXT", "CALL_LOCAL", "GET_PROP", "SET_PROP", "MAKE_ARRAY",
     "MAKE_OBJECT", "RETURN", "THROW", "PUSH_THIS", "PUSH_ARGUMENTS", "TYPEOF",
-    "CALL_METHOD", "GET_CONST_PROP", "STORE_LOCAL_POP"
+    "CALL_METHOD", "GET_CONST_PROP", "STORE_LOCAL_POP", "JMP_NULLISH", "TO_NUMBER"
 ];
 
 var BASES = [257, 263, 269, 521, 1031, 4099, 65537];
@@ -330,7 +355,29 @@ function member(object, property) { return { type: "MemberExpression", object: o
 function arrayExpression(values) { return { type: "ArrayExpression", elements: values }; }
 function returnStatement(argument) { return { type: "ReturnStatement", argument: argument }; }
 function functionExpression(body) { return { type: "FunctionExpression", id: null, params: [], body: { type: "BlockStatement", body: body }, generator: false, expression: false, async: false }; }
+function variableDeclaration(name, init) {
+    return {
+        type: "VariableDeclaration",
+        kind: "var",
+        declarations: [
+            {
+                type: "VariableDeclarator",
+                id: identifier(name),
+                init: init
+            }
+        ]
+    };
+}
 function functionName(node) { return node.id && node.id.name ? node.id.name : ""; }
+
+function markNumericVmInternal(ast) {
+    return traverser.traverse(ast, [], function (node) {
+        if (estest.isFunction(node)) {
+            node.veilmark$numericVmInternal = true;
+        }
+        return node;
+    });
+}
 
 function hashSeed(seed) {
     return crypto.createHash("sha256").update(String(seed)).digest().readUInt32LE(0) || 1;
@@ -490,6 +537,27 @@ function textDigest(value) {
     return hash >>> 0;
 }
 
+function normalizeRatio(value) {
+    var ratio = Number(value);
+    if (!Number.isFinite(ratio)) return 1;
+    if (ratio < 0) return 0;
+    if (ratio > 1) return 1;
+    return ratio;
+}
+
+function normalizeMaxFunctions(value) {
+    if (value === undefined || value === null) return Infinity;
+    var max = Number(value);
+    if (!Number.isFinite(max)) return Infinity;
+    return Math.max(0, Math.floor(max));
+}
+
+function selectionScore(options, node, index) {
+    var name = functionName(node);
+    var bodySize = node && node.body && node.body.body ? node.body.body.length : 0;
+    return textDigest(String(options.seed) + ":" + index + ":" + name + ":" + bodySize) / 0x100000000;
+}
+
 function constantDigest(constants) {
     var hash = textDigest("DJS-HMESH/constants/v1");
     for (var i = 0; i < constants.length; i += 1) {
@@ -597,18 +665,42 @@ function Compiler(fn, dialect, options) {
     this.instructions = [];
     this.labelId = 0;
     this.params = {};
-    this.locals = {};
+    this.functionScope = Object.create(null);
+    this.scopeStack = [];
     this.localCount = 0;
     this.constants = [];
     this.constantKeys = {};
+    this.references = [];
+    this.referenceKeys = {};
 }
 
 Compiler.prototype.label = function () { return "L" + this.labelId++; };
 Compiler.prototype.mark = function (name) { this.instructions.push({ label: name }); };
 Compiler.prototype.emit = function (op) { this.instructions.push({ op: op, args: Array.prototype.slice.call(arguments, 1) }); };
-Compiler.prototype.localSlot = function (name) {
-    if (!Object.prototype.hasOwnProperty.call(this.locals, name)) this.locals[name] = this.localCount++;
-    return this.locals[name];
+Compiler.prototype.pushScope = function () {
+    var scope = Object.create(null);
+    this.scopeStack.push(scope);
+    return scope;
+};
+Compiler.prototype.popScope = function () {
+    this.scopeStack.pop();
+};
+Compiler.prototype.currentScope = function () {
+    if (this.scopeStack.length === 0) return this.pushScope();
+    return this.scopeStack[this.scopeStack.length - 1];
+};
+Compiler.prototype.declareLocal = function (name, functionScoped) {
+    var scope = functionScoped ? this.functionScope : this.currentScope();
+    if (!Object.prototype.hasOwnProperty.call(scope, name)) scope[name] = this.localCount++;
+    return scope[name];
+};
+Compiler.prototype.resolveLocal = function (name) {
+    for (var i = this.scopeStack.length - 1; i >= 0; i -= 1) {
+        var scope = this.scopeStack[i];
+        if (Object.prototype.hasOwnProperty.call(scope, name)) return scope[name];
+    }
+    if (Object.prototype.hasOwnProperty.call(this.functionScope, name)) return this.functionScope[name];
+    return null;
 };
 Compiler.prototype.addConstant = function (kind, value) {
     var key = kind + ":" + String(value);
@@ -618,7 +710,15 @@ Compiler.prototype.addConstant = function (kind, value) {
     this.constants.push({ kind: kind, value: value });
     return index;
 };
-Compiler.prototype.collectLocals = function () {
+Compiler.prototype.addReference = function (value) {
+    var key = String(value);
+    if (Object.prototype.hasOwnProperty.call(this.referenceKeys, key)) return this.referenceKeys[key];
+    var index = this.references.length;
+    this.referenceKeys[key] = index;
+    this.references.push(key);
+    return index;
+};
+Compiler.prototype.validateBindings = function () {
     var self = this;
     this.fn.params.forEach(function (param, index) {
         if (!isSimplePattern(param)) throw new Error("unsupported parameter pattern");
@@ -631,7 +731,6 @@ Compiler.prototype.collectLocals = function () {
         }
         if (node.type === "VariableDeclarator") {
             if (!isSimplePattern(node.id)) throw new Error("unsupported declaration pattern");
-            self.localSlot(node.id.name);
         }
         return node;
     });
@@ -639,23 +738,27 @@ Compiler.prototype.collectLocals = function () {
 Compiler.prototype.compile = function () {
     if (!this.fn.body || this.fn.body.type !== "BlockStatement") throw new Error("unsupported function body");
     if (containsNestedFunction(this.fn.body)) throw new Error("nested functions are not virtualized");
-    this.collectLocals();
-    this.compileBlock(this.fn.body);
+    this.validateBindings();
+    this.pushScope();
+    this.compileBlock(this.fn.body, false);
+    this.popScope();
     this.emit("PUSH_UNDEFINED");
     this.emit("RETURN");
     return this.finish();
 };
-Compiler.prototype.compileBlock = function (block) {
+Compiler.prototype.compileBlock = function (block, createScope) {
     var self = this;
+    if (createScope !== false) this.pushScope();
     block.body.forEach(function (stmt) { self.compileStatement(stmt); });
+    if (createScope !== false) this.popScope();
 };
 Compiler.prototype.compileStatement = function (stmt) {
     switch (stmt.type) {
-        case "BlockStatement": this.compileBlock(stmt); return;
+        case "BlockStatement": this.compileBlock(stmt, true); return;
         case "VariableDeclaration":
             for (var i = 0; i < stmt.declarations.length; i += 1) {
                 var decl = stmt.declarations[i];
-                var slot = this.localSlot(decl.id.name);
+                var slot = this.declareLocal(decl.id.name, stmt.kind === "var");
                 if (decl.init) this.compileExpression(decl.init); else this.emit("PUSH_UNDEFINED");
                 this.emit("STORE_LOCAL", slot);
             }
@@ -726,9 +829,12 @@ Compiler.prototype.compileLiteral = function (expr) {
 Compiler.prototype.compileIdentifier = function (name) {
     if (name === "undefined") this.emit("PUSH_UNDEFINED");
     else if (name === "arguments") this.emit("PUSH_ARGUMENTS");
-    else if (Object.prototype.hasOwnProperty.call(this.params, name)) this.emit("LOAD_ARG", this.params[name]);
-    else if (Object.prototype.hasOwnProperty.call(this.locals, name)) this.emit("LOAD_LOCAL", this.locals[name]);
-    else this.emit("PUSH_CONST", this.addConstant("reference", name));
+    else {
+        var slot = this.resolveLocal(name);
+        if (slot !== null) this.emit("LOAD_LOCAL", slot);
+        else if (Object.prototype.hasOwnProperty.call(this.params, name)) this.emit("LOAD_ARG", this.params[name]);
+        else this.emit("PUSH_CONST", this.addConstant("reference", name));
+    }
 };
 Compiler.prototype.compileArray = function (expr) {
     for (var i = 0; i < expr.elements.length; i += 1) {
@@ -760,7 +866,8 @@ Compiler.prototype.compileUnary = function (expr) {
     else if (expr.operator === "!") this.emit("NOT");
     else if (expr.operator === "~") this.emit("BIT_NOT");
     else if (expr.operator === "typeof") this.emit("TYPEOF");
-    else if (expr.operator !== "+") throw new Error("unsupported unary operator " + expr.operator);
+    else if (expr.operator === "+") this.emit("TO_NUMBER");
+    else throw new Error("unsupported unary operator " + expr.operator);
 };
 Compiler.prototype.compileBinary = function (expr) {
     this.compileExpression(expr.left);
@@ -771,6 +878,19 @@ Compiler.prototype.compileBinary = function (expr) {
 };
 Compiler.prototype.compileLogical = function (expr) {
     var end = this.label();
+    if (expr.operator === "??") {
+        var right = this.label();
+        this.compileExpression(expr.left);
+        this.emit("DUP");
+        this.emit("JMP_NULLISH", right);
+        this.emit("JMP", end);
+        this.mark(right);
+        this.emit("POP");
+        this.compileExpression(expr.right);
+        this.mark(end);
+        return;
+    }
+    if (expr.operator !== "&&" && expr.operator !== "||") throw new Error("unsupported logical operator " + expr.operator);
     this.compileExpression(expr.left);
     this.emit("DUP");
     this.emit(expr.operator === "&&" ? "JMP_FALSE" : "JMP_TRUE", end);
@@ -780,7 +900,8 @@ Compiler.prototype.compileLogical = function (expr) {
 };
 Compiler.prototype.compileAssignment = function (expr) {
     if (expr.left.type === "Identifier") {
-        if (!Object.prototype.hasOwnProperty.call(this.locals, expr.left.name)) throw new Error("unsupported assignment target " + expr.left.name);
+        var slot = this.resolveLocal(expr.left.name);
+        if (slot === null) throw new Error("unsupported assignment target " + expr.left.name);
         if (expr.operator === "=") this.compileExpression(expr.right);
         else {
             var map = { "+=": "ADD", "-=": "SUB", "*=": "MUL", "/=": "DIV", "%=": "MOD" };
@@ -790,7 +911,7 @@ Compiler.prototype.compileAssignment = function (expr) {
             this.emit(map[expr.operator]);
         }
         this.emit("DUP");
-        this.emit("STORE_LOCAL", this.locals[expr.left.name]);
+        this.emit("STORE_LOCAL", slot);
         return;
     }
     if (expr.left.type === "MemberExpression" && expr.operator === "=") {
@@ -931,10 +1052,33 @@ Compiler.prototype.constantExpression = function (constant) {
     if (constant.kind === "undefined") return { type: "UnaryExpression", operator: "void", prefix: true, argument: literal(0) };
     throw new Error("unsupported constant " + constant.kind);
 };
+Compiler.prototype.referenceExpression = function (value) {
+    var next = this.dialect.next;
+    var name = String(value);
+    var salt = (next() & 65535) || 1;
+    var decoded = call(identifier("veilmark$numericVmString"), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
+    return {
+        type: "ConditionalExpression",
+        test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
+        consequent: member(identifier("globalThis"), decoded),
+        alternate: identifier(name)
+    };
+};
 Compiler.prototype.constantCellExpression = function (constant) {
+    if (constant.kind === "reference") {
+        return arrayExpression([
+            literal(3),
+            literal(this.addReference(constant.value))
+        ]);
+    }
+    if (constant.kind !== "string" && constant.kind !== "reference") {
+        return this.constantExpression(constant);
+    }
     return arrayExpression([
-        literal(0),
-        functionExpression([ returnStatement(this.constantExpression(constant)) ])
+        literal(constant.kind === "reference" ? 2 : 0),
+        Object.assign(functionExpression([ returnStatement(this.constantExpression(constant)) ]), {
+            veilmark$numericVmInternal: true
+        })
     ]);
 };
 Compiler.prototype.finish = function () {
@@ -947,6 +1091,7 @@ Compiler.prototype.finish = function () {
         blob: packTokens(encrypted.encrypted, this.dialect.base),
         constants: this.constants.map(this.constantCellExpression.bind(this)),
         opValues: opValues.map(literal),
+        references: this.references.map(this.referenceExpression.bind(this)),
         seed: this.dialect.seed,
         tag: encrypted.tag,
         tokenCount: tokens.length
@@ -968,18 +1113,21 @@ function makeDialect(seedText) {
     return { base: BASES[next() % BASES.length], next: next, opcodes: opcodes, seed: seed };
 }
 
-function vmCall(record, next) {
+function vmCall(record, next, refs) {
+    refs = refs || {};
     return call(identifier("veilmark$numericVmRun"), [
         bigintExpression(record.blob, next),
         literal(record.base),
         literal(record.tokenCount),
         literal(record.seed),
         literal(record.tag),
-        arrayExpression(record.constants),
+        refs.constants || arrayExpression(record.constants),
         identifier("arguments"),
         { type: "ThisExpression" },
-        arrayExpression(record.opValues),
-        record.mesh ? meshExpression(record.mesh) : literal(null)
+        refs.ops || arrayExpression(record.opValues),
+        refs.mesh || (record.mesh ? meshExpression(record.mesh) : literal(null)),
+        arrayExpression(record.references || []),
+        refs.cache || arrayExpression([])
     ]);
 }
 
@@ -987,8 +1135,10 @@ function resolveOptions(options) {
     return Object.assign({
         enabled: false,
         maxFunctionSize: 120,
+        maxFunctions: Infinity,
         minFunctionSize: 1,
         mode: "balanced",
+        ratio: 1,
         seed: "toildefender-numeric-vm",
         hashMesh: {
             bindToVmState: true,
@@ -1008,6 +1158,8 @@ module.exports = class NumericVm {
     constructor(logger, options) {
         this.logger = logger;
         this.options = resolveOptions(options);
+        this.options.ratio = normalizeRatio(this.options.ratio);
+        this.options.maxFunctions = normalizeMaxFunctions(this.options.maxFunctions);
         this.count = 0;
     }
 
@@ -1026,17 +1178,52 @@ module.exports = class NumericVm {
         assert.ok(estest.isNode(ast));
         if (!this.options.enabled) return ast;
 
-        var runtime = replaceStaticBigIntCalls(esprima.parse(RUNTIME));
+        var runtime = markNumericVmInternal(replaceStaticBigIntCalls(esprima.parse(RUNTIME)));
         var self = this;
         var transformed = 0;
+        var candidateIndex = 0;
+        var dataDeclarations = [];
+        var trace = typeof process !== "undefined" && process.env && process.env.TOILDEFENDER_NUMERIC_VM_TRACE === "1";
 
         ast = traverser.traverse(ast, [], function (node) {
             if (!self.shouldTry(node)) return node;
+            var currentIndex = candidateIndex;
+            candidateIndex += 1;
+            if (transformed >= self.options.maxFunctions) return node;
+            if (self.options.ratio <= 0 || selectionScore(self.options, node, currentIndex) >= self.options.ratio) return node;
             try {
+                var originalBodySize = node.body && node.body.body ? node.body.body.length : 0;
                 var dialect = makeDialect(self.options.seed + ":" + transformed + ":" + functionName(node));
                 var record = new Compiler(node, dialect, self.options).compile();
-                node.body = { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next)) ] };
+                var dataName = "veilmark$numericVmData$" + transformed;
+                var opsName = "veilmark$numericVmOps$" + transformed;
+                var meshName = "veilmark$numericVmMesh$" + transformed;
+                var cacheName = "veilmark$numericVmCache$" + transformed;
+                [
+                    variableDeclaration(dataName, arrayExpression(record.constants)),
+                    variableDeclaration(opsName, arrayExpression(record.opValues)),
+                    variableDeclaration(meshName, record.mesh ? meshExpression(record.mesh) : literal(null)),
+                    variableDeclaration(cacheName, arrayExpression([]))
+                ].forEach(function (declaration) {
+                    declaration.veilmark$numericVmInternal = true;
+                    dataDeclarations.push(declaration);
+                });
+                node.body = { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next, {
+                    cache: identifier(cacheName),
+                    constants: identifier(dataName),
+                    mesh: identifier(meshName),
+                    ops: identifier(opsName)
+                })) ] };
                 transformed += 1;
+                if (trace) {
+                    console.error(JSON.stringify({
+                        event: "numeric_vm_transformed",
+                        index: transformed,
+                        candidateIndex: currentIndex,
+                        name: functionName(node),
+                        bodySize: originalBodySize
+                    }));
+                }
             } catch (error) {
                 if (self.options.virtualize === "all-supported") self.logger.warn("numeric_vm skipped " + functionName(node) + ": " + error.message);
             }
@@ -1044,7 +1231,7 @@ module.exports = class NumericVm {
         });
 
         if (transformed > 0) {
-            runtime.body.reverse().forEach(function (node) { ast.body.unshift(node); });
+            ast.body = runtime.body.concat(dataDeclarations).concat(ast.body);
         }
         this.count = transformed;
         return ast;

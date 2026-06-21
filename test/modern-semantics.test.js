@@ -199,6 +199,118 @@ test("mangle preserves shorthand object property keys", () => {
     assert.deepEqual(run(defended), run(code));
 });
 
+test("mangle handles class super without disabling the whole pass", () => {
+    const code = `
+        "use strict";
+        class LocalProblem extends Error {
+            constructor(longMessage) {
+                super(longMessage);
+                this.name = "LocalProblem";
+            }
+        }
+        function makeProblem(longInputValue) {
+            const longSuffixValue = "-ok";
+            return new LocalProblem(longInputValue + longSuffixValue).message;
+        }
+        globalThis.__result = makeProblem("x");
+    `;
+    const disabled = Object.fromEntries(Object.keys(FEATURES).map((name) => [name, false]));
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...disabled,
+            mangle: true,
+            compress: true
+        },
+        logLevel: "error",
+        runtimeHelpers: false
+    }).code;
+
+    assert.equal(defended.includes("longInputValue"), false);
+    assert.equal(defended.includes("longSuffixValue"), false);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("literal protection encodes object property values", () => {
+    const code = `
+        function normalize(error) {
+            return {
+                NotAllowedError: "user_cancelled",
+                InvalidStateError: "credential_excluded"
+            }[error.name] || "unknown";
+        }
+        globalThis.__result = normalize({ name: "NotAllowedError" });
+    `;
+    const defended = defendInspectableCode(code, {
+        ...INSPECTABLE_FEATURES,
+        literals: true,
+        mangle: true,
+        compress: true
+    });
+
+    assert.equal(defended.includes("user_cancelled"), false);
+    assert.equal(defended.includes("credential_excluded"), false);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("literal protection encodes untagged template text", () => {
+    const code = `
+        function format(value) {
+            return \`hello \${value.message}\`;
+        }
+        globalThis.__result = format({ message: "world" });
+    `;
+    const defended = defendInspectableCode(code, {
+        ...INSPECTABLE_FEATURES,
+        literals: true,
+        mangle: true,
+        compress: true
+    });
+
+    assert.equal(defended.includes("hello "), false);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("literal protection encodes regular expression pattern and flags", () => {
+    const code = `
+        const nativeSource = /\\{\\s*\\[native code\\]\\s*\\}/i;
+        globalThis.__result = {
+            native: nativeSource.test("function x() { [native code] }"),
+            fake: nativeSource.test("function x() { nope }"),
+            source: nativeSource.source,
+            flags: nativeSource.flags
+        };
+    `;
+    const defended = defendInspectableCode(code, {
+        ...INSPECTABLE_FEATURES,
+        literals: true,
+        mangle: true,
+        compress: true
+    });
+
+    assert.equal(defended.includes("[native code]"), false);
+    assert.equal(defended.includes("\\\\s"), false);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("regex obfuscation preserves fresh literal state", () => {
+    const code = `
+        function hit(value) {
+            return /a/g.test(value);
+        }
+        globalThis.__result = [hit("a"), hit("a")];
+    `;
+    const defended = defendInspectableCode(code, {
+        ...INSPECTABLE_FEATURES,
+        literals: true,
+        mangle: true,
+        compress: true
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
 test("normalizer preserves single-statement for-of bodies", () => {
     const code = `
         var kit = {
@@ -237,6 +349,418 @@ test("normalizer preserves single-statement for-of bodies", () => {
     assert.deepEqual(run(defended), run(code));
 });
 
+test("identifier literal table preserves regular expression literals", () => {
+    const code = `
+        const nativeSource = /\\{\\s*\\[native code\\]\\s*\\}/;
+        globalThis.__result = {
+            native: nativeSource.test("function x() { [native code] }"),
+            fake: nativeSource.test("function x() { nope }")
+        };
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: false,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.equal(defended.includes("[object Object]"), false);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("identifier literal table leaves hot numeric literals direct", () => {
+    const code = `
+        let total = 0;
+        for (let i = 0; i < 8; i += 1) {
+            total += i * 128;
+        }
+        globalThis.__result = total;
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: false,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.match(defended, /total = 0/);
+    assert.match(defended, /i < 8/);
+    assert.match(defended, /i \* 128/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope flattening preserves default parameter initialization", () => {
+    const code = `
+        function makeKit(root = globalThis) {
+            const objectCtor = root.Object ?? Object;
+            return objectCtor.keys({ a: 1, b: 2 }).join(",");
+        }
+        globalThis.__result = {
+            omitted: makeKit(),
+            explicit: makeKit({ Object })
+        };
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: true,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope flattening rewrites shorthand object property values", () => {
+    const code = `
+        function deriveSeeds(salt) {
+            let a = 0x12345678;
+            let b = 0x9abcdef0;
+            let c = 0x10203040;
+            let d = 0x50607080;
+            for (let i = 0; i < salt.length; i += 1) {
+                a = (a ^ salt[i]) >>> 0;
+                b = (b + a + i) >>> 0;
+                c = (a ^ b ^ c) >>> 0;
+                d = (d + c) >>> 0;
+            }
+            return { a, b, c, d };
+        }
+        globalThis.__result = deriveSeeds([3, 5, 8, 13]);
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope flattening lowers plain object destructuring before bitwise math", () => {
+    const code = `
+        function words(value) {
+            return { lo: value ^ 0x12345678, hi: value ^ 0x9abcdef0 };
+        }
+        function digest(value) {
+            const { lo, hi } = words(value);
+            return [(lo ^ 0x243f6a88) >>> 0, (hi ^ 0x85a308d3) >>> 0];
+        }
+        globalThis.__result = digest(0x0f0f0f0f);
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope flattening skips empty loop block scope objects", () => {
+    const code = `
+        function countTo(limit) {
+            let x = 0;
+            while (x < limit) {
+                x += 1;
+            }
+            return x;
+        }
+        globalThis.__result = countTo(5);
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.doesNotMatch(defended, /while\s*\([^)]*\)\s*\{\s*var \$\$scope\$[A-Za-z0-9]+\s*=\s*\[\];/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope ratio can avoid scope object flattening", () => {
+    const code = `
+        function total(input) {
+            var localValue = input + 1;
+            return localValue * 3;
+        }
+        globalThis.__result = total(4);
+    `;
+    const features = {
+        ...INSPECTABLE_FEATURES,
+        identifiers: false,
+        mangle: false,
+        compress: false
+    };
+    const flattened = toildefender.do({
+        code,
+        modulesCode: {},
+        forceFeatures: features,
+        scope: {
+            ratio: 1,
+            seed: "scope-ratio-test"
+        },
+        logLevel: "error"
+    }).code;
+    const retained = toildefender.do({
+        code,
+        modulesCode: {},
+        forceFeatures: features,
+        scope: {
+            ratio: 0,
+            seed: "scope-ratio-test"
+        },
+        logLevel: "error"
+    }).code;
+
+    assert.match(flattened, /\$\$scope\$/);
+    assert.doesNotMatch(retained, /\$\$scope\$/);
+    assert.deepEqual(run(flattened), run(code));
+    assert.deepEqual(run(retained), run(code));
+});
+
+test("scope flattening keeps loop block locals separate from function helpers", () => {
+    const code = `
+        function collectRows(globals) {
+            const rows = [];
+            let index = 0;
+
+            const next = () => {
+                index += 1;
+                return "n" + String(index).padStart(2, "0");
+            };
+
+            const push = (value) => {
+                rows.push(next() + ":" + value);
+            };
+
+            for (const name of Object.keys(globals)) {
+                const value = globals[name];
+                push(value.kind);
+
+                const prototype = value.prototype;
+                if (prototype) {
+                    push(prototype.kind);
+                }
+            }
+
+            return rows;
+        }
+
+        globalThis.__result = collectRows({
+            A: { kind: "ctor", prototype: { kind: "proto" } }
+        });
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: true,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope flattening lowers array destructuring before moving closure readers", () => {
+    const code = `
+        function createReader() {
+            let pos = 0;
+            const readByte = () => {
+                pos += 1;
+                return pos;
+            };
+            const readBool = () => readByte() !== 0;
+            const readCount = () => readByte() + 10;
+            const readString = () => "skip";
+            const readBytes = () => [readByte(), readByte()];
+            const done = () => pos > 4;
+            return [readByte, readBool, readCount, readString, readBytes, done];
+        }
+
+        function decode() {
+            let [readByte, readBool, readCount, , readBytes, done] = createReader();
+            return [
+                readByte(),
+                readBool(),
+                readCount(),
+                readBytes(),
+                done()
+            ];
+        }
+
+        globalThis.__result = decode();
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: true,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope flattening keeps returned reader locals separate from module defaults", () => {
+    const code = `
+        class DecodeFault extends Error {}
+
+        const BOOT = makeKit(globalThis);
+        function bootKit() {
+            return BOOT;
+        }
+        function makeKit(root = globalThis) {
+            return { root };
+        }
+        function guardPlainData(value, kit = BOOT) {
+            return kit.root ? value : null;
+        }
+
+        const MAGIC = [86, 77, 82, 49];
+
+        function createReader(bytes) {
+            let offset = 0;
+            const readByte = () => {
+                if (offset >= bytes.length) throw new DecodeFault("unexpected end");
+                const byte = bytes[offset];
+                offset += 1;
+                return byte ?? 0;
+            };
+            const readBool = () => readByte() !== 0;
+            const done = () => offset === bytes.length;
+            return [readByte, readBool, done];
+        }
+
+        function open(bytes) {
+            let reader = createReader(bytes), [readByte] = reader;
+            for (let i = 0; i < MAGIC.length; i += 1) readByte();
+            if (readByte() !== 1) throw new DecodeFault("unsupported response version");
+            return reader;
+        }
+
+        function decode(bytes) {
+            const [readByte, readBool, done] = open(bytes);
+            const value = {
+                bot: readBool(),
+                allowed: readBool(),
+                mode: readByte() === 1 ? "interactive" : "hidden",
+                complete: done()
+            };
+            return guardPlainData(value, bootKit());
+        }
+
+        globalThis.__result = decode([86, 77, 82, 49, 1, 0, 1, 1]);
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: true,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("normalizer lowers array destructuring in for-of loop declarations", () => {
+    const code = `
+        function collect(entries) {
+            const out = [];
+            for (const [key, value] of entries) {
+                out.push(key + ":" + value);
+            }
+            return out;
+        }
+        globalThis.__result = collect([["a", 1], ["b", 2]]);
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: true,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("normalizer lowers rest parameters before callback extraction", () => {
+    const code = `
+        function firstBoolean(...values) {
+            return values.find((value) => typeof value === "boolean") ?? null;
+        }
+        function firstString(...values) {
+            return values.find((value) => value.length > 0) ?? "";
+        }
+        globalThis.__result = {
+            bool: firstBoolean(null, undefined, false, true),
+            text: firstString("", "ok")
+        };
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: true,
+        compress: false
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
 async function assertSameAsyncRuntimeResult(code, options) {
     const defended = defendCode(code, options);
     assert.equal(defended.includes("$$defend"), false);
@@ -269,6 +793,114 @@ test("control-flow flattening declares throw sentinel for strict module output",
 
     assert.match(defended, /veilmark\$tobethrown/);
     assert.deepEqual(runStrict(defended), run(code));
+});
+
+test("control-flow ratio can avoid dispatcher flattening", () => {
+    const code = `
+        function add(a, b) {
+            return a + b;
+        }
+        function mul(a, b) {
+            return a * b;
+        }
+        globalThis.__result = {
+            a: add(2, 3),
+            b: mul(4, 5)
+        };
+    `;
+    const features = {
+        dead_code: false,
+        scope: true,
+        control_flow: true,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    };
+    const full = defendCode(code, {
+        forceFeatures: features,
+        controlFlow: {
+            ratio: 1,
+            seed: "ratio-test"
+        }
+    });
+    const skipped = defendCode(code, {
+        forceFeatures: features,
+        controlFlow: {
+            ratio: 0,
+            seed: "ratio-test"
+        }
+    });
+
+    assert.match(full, /function main/);
+    assert.doesNotMatch(skipped, /function main/);
+    assert.deepEqual(run(full), run(code));
+    assert.deepEqual(run(skipped), run(code));
+});
+
+test("scope ratio keeps generated literal table reachable under control flow", () => {
+    const code = `
+        function readValue() {
+            return { a: "hello" }.a + " world";
+        }
+        globalThis.__result = readValue();
+    `;
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...FEATURES,
+            dead_code: false,
+            numeric_vm: false
+        },
+        scope: {
+            ratio: 0,
+            seed: "scope-control-flow-literal-test"
+        },
+        controlFlow: {
+            ratio: 0.5,
+            seed: "scope-control-flow-literal-test"
+        },
+        logLevel: "error"
+    }).code;
+
+    assert.equal(defended.includes("veilmark$literals"), false);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("scope ratio keeps closure-captured locals reachable under control flow", () => {
+    const code = `
+        function outer(seed) {
+            var localValue = seed + 7;
+            function inner(input) {
+                return localValue + input;
+            }
+            return inner(3);
+        }
+        globalThis.__result = outer(11);
+    `;
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...FEATURES,
+            dead_code: false,
+            numeric_vm: false
+        },
+        scope: {
+            ratio: 0,
+            seed: "scope-control-flow-closure-test"
+        },
+        controlFlow: {
+            ratio: 0.5,
+            seed: "scope-control-flow-closure-test"
+        },
+        logLevel: "error"
+    }).code;
+
+    assert.deepEqual(run(defended), run(code));
 });
 
 test("preserves optional chaining and nullish coalescing semantics", () => {
@@ -678,7 +1310,7 @@ test("virtual machine protection emits BigInt literal bytecode and removes sourc
     assert.deepEqual(run(defended), run(code));
 });
 
-test("virtual machine runtime streams bytecode instead of materializing decoded tokens", () => {
+test("virtual machine runtime caches encrypted bytecode without emitting decoded tokens", () => {
     const code = `
         function bob(value) {
             var total = value + 4;
@@ -691,8 +1323,86 @@ test("virtual machine runtime streams bytecode instead of materializing decoded 
     assert.equal(defended.includes("var tokens = []"), false);
     assert.equal(defended.includes("tokens.push"), false);
     assert.match(defended, /function veilmark\$numericVmDigit/);
+    assert.match(defended, /var encryptedCache = cache && cache\[0\] \|\| null/);
+    assert.match(defended, /plainCache = new Array/);
     assert.match(defended, /var layout = seed & 1/);
     assert.match(defended, /Object\.create\(null\)/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("virtual machine protection preserves nullish coalescing semantics", () => {
+    const code = `
+        function choose(value) {
+            return value ?? "fallback";
+        }
+        globalThis.__result = [
+            choose(0),
+            choose(false),
+            choose(""),
+            choose(null),
+            choose(undefined)
+        ];
+    `;
+    const defended = defendVmCode(code);
+
+    assert.match(defended, /\d+n/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("virtual machine protection preserves unary plus coercion", () => {
+    const code = `
+        function coerce(value) {
+            return +value;
+        }
+        globalThis.__result = [
+            coerce("7"),
+            Number.isNaN(coerce("nope")),
+            Object.is(coerce("-0"), -0)
+        ];
+    `;
+    const defended = defendVmCode(code);
+
+    assert.match(defended, /\d+n/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("virtual machine protection preserves block-local shadowing of parameters", () => {
+    const code = `
+        function write(out, value) {
+            var row = value;
+            for (let value = 0; value < 4; value += 1) {
+                out.push(row[value] ?? null);
+            }
+            return out.length;
+        }
+        var bucket = [];
+        globalThis.__result = [write(bucket, [3, 4, 5]), bucket];
+    `;
+    const defended = defendVmCode(code);
+
+    assert.match(defended, /\d+n/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("virtual machine protection preserves same-name locals in separate blocks", () => {
+    const code = `
+        function pick(flag) {
+            var out = [];
+            if (flag) {
+                let value = "left";
+                out.push(value);
+            }
+            {
+                let value = "right";
+                out.push(value);
+            }
+            return out.join("|");
+        }
+        globalThis.__result = [pick(true), pick(false)];
+    `;
+    const defended = defendVmCode(code);
+
+    assert.match(defended, /\d+n/);
     assert.deepEqual(run(defended), run(code));
 });
 
@@ -821,6 +1531,69 @@ test("virtual machine protection can be enabled with protections.virtualMachine 
     });
 
     assert.match(result.code, /\d+n/);
+    assert.match(result.code, /function veilmark\$numericVmRun/);
+    assert.deepEqual(run(result.code), run(code));
+});
+
+test("virtual machine protection can limit selected functions", () => {
+    const code = `
+        function one(value) {
+            return value + 1;
+        }
+        function two(value) {
+            return value * 2;
+        }
+        globalThis.__result = [one(4), two(5)];
+    `;
+    const result = toildefender.do({
+        code,
+        modulesCode: {},
+        forceFeatures: VM_FEATURES,
+        numericVm: {
+            enabled: true,
+            maxFunctionSize: 20,
+            maxFunctions: 1,
+            minFunctionSize: 1,
+            seed: "numeric-vm-limit-test",
+            virtualize: "all-supported"
+        },
+        logLevel: "error"
+    });
+
+    assert.equal((result.code.match(/veilmark\$numericVmRun/g) || []).length, 2);
+    assert.deepEqual(run(result.code), run(code));
+});
+
+test("scope extraction does not bind-wrap numeric VM runtime internals", () => {
+    const code = `
+        function add(value) {
+            return value + 7;
+        }
+        globalThis.__result = add(5);
+    `;
+    const result = toildefender.do({
+        code,
+        modulesCode: {},
+        forceFeatures: {
+            ...VM_FEATURES,
+            scope: true,
+            mangle: false,
+            compress: false,
+            literals: false
+        },
+        numericVm: {
+            enabled: true,
+            maxFunctionSize: 20,
+            minFunctionSize: 1,
+            seed: "numeric-vm-no-runtime-bind",
+            virtualize: "all-supported"
+        },
+        logLevel: "error"
+    });
+
+    assert.match(result.code, /function veilmark\$numericVmRun/);
+    assert.equal(result.code.includes("veilmark$bind(veilmark$numericVmRun"), false);
+    assert.equal(result.code.includes("veilmark$bind(veilmark$hashMesh"), false);
     assert.deepEqual(run(result.code), run(code));
 });
 
@@ -937,5 +1710,88 @@ test("virtual machine protection survives full obfuscation pipeline", () => {
     });
 
     assert.match(result.code, /\d+n/);
+    assert.deepEqual(run(result.code), run(code));
+});
+
+test("virtual machine runtime helper names survive final modern mangle", () => {
+    const code = `
+        class Runner {
+            static run(input) {
+                return packed(input);
+            }
+        }
+        function packed(input) {
+            let value = input.length;
+            value += input.charCodeAt(0);
+            return value;
+        }
+        globalThis.__result = Runner.run("Veilmark");
+    `;
+    const result = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...FEATURES,
+            dead_code: false,
+            numeric_vm: true
+        },
+        protections: {
+            hashMesh: {
+                enabled: true,
+                mode: "aggressive",
+                unlock: "per-function"
+            },
+            virtualMachine: {
+                enabled: true,
+                maxFunctionSize: 400,
+                minFunctionSize: 1,
+                seed: "modern-mangle-vm-runtime-name",
+                virtualize: "all-supported"
+            }
+        },
+        logLevel: "error"
+    });
+
+    assert.deepEqual(run(result.code), run(code));
+});
+
+test("virtual machine runtime helpers stay visible when scope runs without control flow", () => {
+    const code = `
+        function packed(input) {
+            return input.length + input.charCodeAt(0);
+        }
+        globalThis.__result = packed("Veilmark");
+    `;
+    const result = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            dead_code: false,
+            scope: true,
+            control_flow: false,
+            identifiers: false,
+            numeric_vm: true,
+            object_packing: false,
+            literals: true,
+            mangle: true,
+            compress: true
+        },
+        protections: {
+            hashMesh: {
+                enabled: true,
+                mode: "aggressive",
+                unlock: "per-function"
+            },
+            virtualMachine: {
+                enabled: true,
+                maxFunctionSize: 400,
+                minFunctionSize: 1,
+                seed: "scope-no-control-flow-vm-runtime",
+                virtualize: "all-supported"
+            }
+        },
+        logLevel: "error"
+    });
+
     assert.deepEqual(run(result.code), run(code));
 });

@@ -194,6 +194,10 @@ function isClassMethodFunction(stack) {
     return stack.some(frame => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
 }
 
+function isNumericVmInternalFunction(node, stack) {
+    return node.veilmark$numericVmInternal === true || stack.some(frame => frame.node && frame.node.veilmark$numericVmInternal === true);
+}
+
 /**
  * Get index of argument in function.
  * @param {Function} method Function
@@ -298,6 +302,9 @@ module.exports = class Methods {
         var methods = [];
         
         traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(node, stack)) {
+                return node;
+            }
             if (node.type == "FunctionDeclaration") { // Statement
                 methods.push(functionDeclarationName(node));
             } else if (node.type == "FunctionExpression" && !isClassMethodFunction(stack)) { // Expression
@@ -321,6 +328,9 @@ module.exports = class Methods {
         var methods = [];
         
         traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(node, stack)) {
+                return node;
+            }
             if (node.type == "FunctionDeclaration") { // Statement
                 functionDeclarationName(node);
                 methods.push(node);
@@ -393,6 +403,9 @@ module.exports = class Methods {
         assert.equal(typeof methodEntryExitPoints, "object");
         
         traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(node, stack)) {
+                return node;
+            }
             if (node.type == "Identifier" && methodEntryExitPoints[node.name] && methodEntryExitPoints[node.name].entry) {
                 var dispatcher = methodEntryExitPoints[node.name].dispatcher || "main";
                 return {

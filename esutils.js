@@ -74,7 +74,11 @@ module.exports = function (logger) {
         assert.equal(estest.isExpression(child), estest.isExpression(replacement), `Replacee ${child.type} is not of the same type as replacement ${replacement.type}`);
         
         var _this = this;
-        root = this.getParent(child) || root;
+        var parent = this.getParent(child);
+        if (parent && parent.type == "Property" && parent.shorthand === true && parent.value == child) {
+            parent.shorthand = false;
+        }
+        root = parent || root;
         traverser.traverseEx(root, [], function (node, stack) {
             if (node == child) {
                 this.abort();

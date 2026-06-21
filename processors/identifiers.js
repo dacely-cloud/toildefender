@@ -33,6 +33,17 @@ function isBigIntLiteral(node) {
     return node.type == "Literal" && typeof node.value == "bigint";
 }
 
+function canMoveLiteral(node) {
+    if (node.type != "Literal" || isBigIntLiteral(node) || node.regex) {
+        return false;
+    }
+    return typeof node.value == "string";
+}
+
+function isNumericVmInternalFunction(stack) {
+    return stack.some(frame => frame.node && frame.node.veilmark$numericVmInternal === true);
+}
+
 module.exports = class Identifiers {
 
     constructor (logger) {
@@ -65,6 +76,9 @@ module.exports = class Identifiers {
         assert.ok(estest.isNode(ast));
         
         ast = traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(stack)) {
+                return node;
+            }
             if (node.type == "MemberExpression"
                 && !node.computed) {
                 assert(node.property.type == "Identifier");
@@ -88,6 +102,9 @@ module.exports = class Identifiers {
         options = options || {};
 
         ast = traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(stack)) {
+                return node;
+            }
             if (node.type == "ObjectExpression") {
                 if (options.objectPacking === false) {
                     return node;
@@ -211,7 +228,10 @@ module.exports = class Identifiers {
         var vars = [];
         
         ast = traverser.traverse(ast, [], (node, stack) => {
-            if (node.type == "Literal" && !isBigIntLiteral(node) && stack.length > 0 && stack[1].node.type != "Property") {
+            if (isNumericVmInternalFunction(stack)) {
+                return node;
+            }
+            if (canMoveLiteral(node) && stack.length > 0 && stack[1].node.type != "Property") {
                 var idx = vars.indexOf(node.value);
                 if (idx == -1) {
                     idx = vars.length;

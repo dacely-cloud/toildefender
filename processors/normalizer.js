@@ -284,6 +284,29 @@ function hasObjectRest(pattern) {
     return pattern.type == "ObjectPattern" && pattern.properties.some(prop => prop.type == "RestElement");
 }
 
+function hasObjectPattern(pattern) {
+    return pattern.type == "ObjectPattern";
+}
+
+function hasArrayPattern(pattern) {
+    return pattern.type == "ArrayPattern";
+}
+
+function canLowerArrayPattern(pattern) {
+    return pattern.type == "ArrayPattern" && pattern.elements.every(element => {
+        if (element == null) {
+            return true;
+        }
+        if (element.type == "Identifier") {
+            return true;
+        }
+        if (element.type == "RestElement") {
+            return element.argument.type == "Identifier";
+        }
+        return element.type == "AssignmentPattern" && element.left.type == "Identifier";
+    });
+}
+
 function canLowerObjectRest(pattern) {
     return pattern.type == "ObjectPattern" && pattern.properties.every(prop => {
         if (prop.type == "RestElement") {
@@ -328,6 +351,162 @@ function objectWithoutKeysCall(source, keys) {
             }
         ]
     };
+}
+
+function arrayElementExpression(sourceName, index) {
+    return {
+        type: "MemberExpression",
+        object: { type: "Identifier", name: sourceName },
+        property: { type: "Literal", value: index },
+        computed: true
+    };
+}
+
+function arrayRestExpression(sourceName, index) {
+    return {
+        type: "CallExpression",
+        callee: {
+            type: "MemberExpression",
+            object: { type: "Identifier", name: sourceName },
+            property: { type: "Identifier", name: "slice" },
+            computed: false
+        },
+        arguments: [
+            { type: "Literal", value: index }
+        ]
+    };
+}
+
+function arrayPatternElementDeclaration(kind, sourceName, element, index) {
+    if (element == null) {
+        return null;
+    }
+
+    if (element.type == "RestElement") {
+        return {
+            type: "VariableDeclaration",
+            kind: kind,
+            declarations: [
+                {
+                    type: "VariableDeclarator",
+                    id: element.argument,
+                    init: arrayRestExpression(sourceName, index)
+                }
+            ]
+        };
+    }
+
+    var id = element;
+    var init = arrayElementExpression(sourceName, index);
+    if (element.type == "AssignmentPattern") {
+        id = element.left;
+        init = {
+            type: "ConditionalExpression",
+            test: {
+                type: "BinaryExpression",
+                operator: "===",
+                left: arrayElementExpression(sourceName, index),
+                right: { type: "Identifier", name: "undefined" }
+            },
+            consequent: element.right,
+            alternate: arrayElementExpression(sourceName, index)
+        };
+    }
+
+    return {
+        type: "VariableDeclaration",
+        kind: kind,
+        declarations: [
+            {
+                type: "VariableDeclarator",
+                id: id,
+                init: init
+            }
+        ]
+    };
+}
+
+function arrayPatternStatements(kind, pattern, init, rngAlpha) {
+    var sourceName = `$$destructure$arr$${rngAlpha.get()}`;
+    var statements = [
+        {
+            type: "VariableDeclaration",
+            kind: "var",
+            declarations: [
+                {
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: sourceName },
+                    init: init || { type: "ArrayExpression", elements: [] }
+                }
+            ]
+        }
+    ];
+
+    pattern.elements.forEach((element, index) => {
+        var lowered = arrayPatternElementDeclaration(kind, sourceName, element, index);
+        if (lowered) {
+            statements.push(lowered);
+        }
+    });
+
+    return statements;
+}
+
+function arrayPatternAssignmentStatement(sourceName, element, index) {
+    if (element == null) {
+        return null;
+    }
+
+    var left;
+    var right;
+    if (element.type == "RestElement") {
+        left = element.argument;
+        right = arrayRestExpression(sourceName, index);
+    } else if (element.type == "AssignmentPattern") {
+        left = element.left;
+        right = {
+            type: "ConditionalExpression",
+            test: {
+                type: "BinaryExpression",
+                operator: "===",
+                left: arrayElementExpression(sourceName, index),
+                right: { type: "Identifier", name: "undefined" }
+            },
+            consequent: element.right,
+            alternate: arrayElementExpression(sourceName, index)
+        };
+    } else {
+        left = element;
+        right = arrayElementExpression(sourceName, index);
+    }
+
+    return assignmentStatement(left, right);
+}
+
+function arrayPatternAssignmentStatements(pattern, init, rngAlpha) {
+    var sourceName = `$$destructure$arr$${rngAlpha.get()}`;
+    var statements = [
+        {
+            type: "VariableDeclaration",
+            kind: "var",
+            declarations: [
+                {
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: sourceName },
+                    init: init || { type: "ArrayExpression", elements: [] }
+                }
+            ]
+        }
+    ];
+
+    pattern.elements.forEach((element, index) => {
+        var lowered = arrayPatternAssignmentStatement(sourceName, element, index);
+        if (lowered) {
+            statements.push(lowered);
+        }
+    });
+
+    return statements;
 }
 
 function objectPatternPropertyDeclaration(kind, sourceName, prop) {
@@ -376,6 +555,108 @@ function containsThisExpression(node) {
         return child;
     });
     return found;
+}
+
+function defaultParameterStatement(param) {
+    return {
+        type: "IfStatement",
+        test: {
+            type: "BinaryExpression",
+            operator: "===",
+            left: utils.cloneISwearIKnowWhatImDoing(param.left),
+            right: { type: "Identifier", name: "undefined" }
+        },
+        consequent: {
+            type: "BlockStatement",
+            body: [
+                {
+                    type: "ExpressionStatement",
+                    expression: {
+                        type: "AssignmentExpression",
+                        operator: "=",
+                        left: utils.cloneISwearIKnowWhatImDoing(param.left),
+                        right: param.right
+                    }
+                }
+            ]
+        }
+    };
+}
+
+function restParameterStatement(param, index) {
+    return {
+        type: "VariableDeclaration",
+        kind: "var",
+        declarations: [
+            {
+                type: "VariableDeclarator",
+                id: param.argument,
+                init: {
+                    type: "CallExpression",
+                    callee: {
+                        type: "MemberExpression",
+                        object: {
+                            type: "MemberExpression",
+                            object: {
+                                type: "MemberExpression",
+                                object: { type: "Identifier", name: "Array" },
+                                property: { type: "Identifier", name: "prototype" },
+                                computed: false
+                            },
+                            property: { type: "Identifier", name: "slice" },
+                            computed: false
+                        },
+                        property: { type: "Identifier", name: "call" },
+                        computed: false
+                    },
+                    arguments: [
+                        { type: "Identifier", name: "arguments" },
+                        { type: "Literal", value: index }
+                    ]
+                }
+            }
+        ]
+    };
+}
+
+function lowerFunctionParameters(node) {
+    if (!estest.isFunction(node) || !Array.isArray(node.params)) {
+        return node;
+    }
+
+    var prefix = [];
+    var params = [];
+    node.params.forEach((param, index) => {
+        if (param.type == "AssignmentPattern" && param.left.type == "Identifier") {
+            prefix.push(defaultParameterStatement(param));
+            params.push(param.left);
+            return;
+        }
+        if (param.type == "RestElement" && param.argument.type == "Identifier") {
+            prefix.push(restParameterStatement(param, index));
+            return;
+        }
+        params.push(param);
+    });
+    node.params = params;
+
+    if (prefix.length == 0) {
+        return node;
+    }
+
+    if (node.body.type != "BlockStatement") {
+        node.body = {
+            type: "BlockStatement",
+            body: [
+                {
+                    type: "ReturnStatement",
+                    argument: node.body
+                }
+            ]
+        };
+    }
+    node.body.body = prefix.concat(node.body.body);
+    return node;
 }
 
 function blockNeedsLexicalScope(node) {
@@ -436,6 +717,8 @@ module.exports = class Normalizer {
                     return this.simplifyTryStatement(node);
                 case "CallExpression":
                     return this.simplifyCallExpression(node);
+                case "ExpressionStatement":
+                    return this.simplifyExpressionStatement(node);
                 case "ChainExpression":
                     return this.simplifyChainExpression(node);
                 case "LogicalExpression":
@@ -444,6 +727,9 @@ module.exports = class Normalizer {
                     return this.simplifyObjectExpression(node);
                 case "VariableDeclaration":
                     return this.simplifyVariableDeclaration(node, stack);
+                case "FunctionDeclaration":
+                case "FunctionExpression":
+                    return lowerFunctionParameters(node);
                 case "ArrowFunctionExpression":
                     return this.simplifyArrowFunctionExpression(node);
                 case "ClassDeclaration":
@@ -577,6 +863,56 @@ module.exports = class Normalizer {
         assert.ok(estest.isNode(node));
         
         var propsName = `$$forin$props$${this.rngAlpha.get()}`, iterName = `$$forin$iter$${this.rngAlpha.get()}`;
+        var valueAtIndex = {
+            type: "MemberExpression",
+            object: { type: "Identifier", name: propsName },
+            property: { type: "Identifier", name: iterName },
+            computed: true
+        };
+        var assignStatements;
+        if (node.left.type == "VariableDeclaration") {
+            var declaration = node.left.declarations[0];
+            if (hasArrayPattern(declaration.id) && canLowerArrayPattern(declaration.id)) {
+                assignStatements = arrayPatternStatements(
+                    node.left.kind == "const" ? "let" : node.left.kind,
+                    declaration.id,
+                    valueAtIndex,
+                    this.rngAlpha
+                );
+            } else {
+                assignStatements = [
+                    {
+                        type: "VariableDeclaration",
+                        kind: "var",
+                        declarations: [
+                            {
+                                type: "VariableDeclarator",
+                                id: declaration.id,
+                                init: valueAtIndex
+                            }
+                        ]
+                    }
+                ];
+            }
+        } else if (hasArrayPattern(node.left) && canLowerArrayPattern(node.left)) {
+            assignStatements = arrayPatternAssignmentStatements(
+                node.left,
+                valueAtIndex,
+                this.rngAlpha
+            );
+        } else {
+            assignStatements = [
+                {
+                    type: "ExpressionStatement",
+                    expression: {
+                        type: "AssignmentExpression",
+                        operator: "=",
+                        left: node.left,
+                        right: valueAtIndex
+                    }
+                }
+            ];
+        }
         
         var forStmt = {
             type: "ForStatement",
@@ -626,42 +962,7 @@ module.exports = class Normalizer {
             },
             body: {
                 type: "BlockStatement",
-                body: [
-                    node.left.type == "VariableDeclaration"
-                    ?
-                    {
-                        type: "VariableDeclaration",
-                        kind: "var",
-                        declarations: [
-                            {
-                                type: "VariableDeclarator",
-                                id: node.left.declarations[0].id,
-                                init:  {
-                                    type: "MemberExpression",
-                                    object: { type: "Identifier", name: propsName },
-                                    property: { type: "Identifier", name: iterName },
-                                    computed: true
-                                }
-                            }
-                        ]
-                    }
-                    :
-                    {
-                        type: "ExpressionStatement",
-                        expression: {
-                            type: "AssignmentExpression",
-                            operator: "=",
-                            left: node.left,
-                            right: {
-                                type: "MemberExpression",
-                                object: { type: "Identifier", name: propsName },
-                                property: { type: "Identifier", name: iterName },
-                                computed: true
-                            }
-                        }
-                    },
-                    node.body
-                ]
+                body: assignStatements.concat([node.body])
             }
         };
         return forStmt;
@@ -682,29 +983,50 @@ module.exports = class Normalizer {
             property: { type: "Identifier", name: iterName },
             computed: true
         };
-        var assignValue = node.left.type == "VariableDeclaration"
-        ?
-        {
-            type: "VariableDeclaration",
-            kind: node.left.kind == "const" ? "let" : node.left.kind,
-            declarations: [
-                {
-                    type: "VariableDeclarator",
-                    id: node.left.declarations[0].id,
-                    init: valueAtIndex
-                }
-            ]
-        }
-        :
-        {
-            type: "ExpressionStatement",
-            expression: {
-                type: "AssignmentExpression",
-                operator: "=",
-                left: node.left,
-                right: valueAtIndex
+        var assignStatements;
+        if (node.left.type == "VariableDeclaration") {
+            var declaration = node.left.declarations[0];
+            if (hasArrayPattern(declaration.id) && canLowerArrayPattern(declaration.id)) {
+                assignStatements = arrayPatternStatements(
+                    node.left.kind == "const" ? "let" : node.left.kind,
+                    declaration.id,
+                    valueAtIndex,
+                    this.rngAlpha
+                );
+            } else {
+                assignStatements = [
+                    {
+                        type: "VariableDeclaration",
+                        kind: node.left.kind == "const" ? "let" : node.left.kind,
+                        declarations: [
+                            {
+                                type: "VariableDeclarator",
+                                id: declaration.id,
+                                init: valueAtIndex
+                            }
+                        ]
+                    }
+                ];
             }
-        };
+        } else if (hasArrayPattern(node.left) && canLowerArrayPattern(node.left)) {
+            assignStatements = arrayPatternAssignmentStatements(
+                node.left,
+                valueAtIndex,
+                this.rngAlpha
+            );
+        } else {
+            assignStatements = [
+                {
+                    type: "ExpressionStatement",
+                    expression: {
+                        type: "AssignmentExpression",
+                        operator: "=",
+                        left: node.left,
+                        right: valueAtIndex
+                    }
+                }
+            ];
+        }
 
         return {
             type: "BlockStatement",
@@ -747,7 +1069,7 @@ module.exports = class Normalizer {
                     },
                     body: {
                         type: "BlockStatement",
-                        body: [assignValue].concat(blockToArray(node.body))
+                        body: assignStatements.concat(blockToArray(node.body))
                     }
                 }
             ]
@@ -959,6 +1281,28 @@ module.exports = class Normalizer {
         };
     }
 
+    simplifyExpressionStatement (node) {
+        assert.ok(estest.isNode(node));
+
+        if (
+            node.expression.type == "AssignmentExpression" &&
+            node.expression.operator == "=" &&
+            hasArrayPattern(node.expression.left) &&
+            canLowerArrayPattern(node.expression.left)
+        ) {
+            return {
+                type: "BlockStatement",
+                body: arrayPatternAssignmentStatements(
+                    node.expression.left,
+                    node.expression.right,
+                    this.rngAlpha
+                )
+            };
+        }
+
+        return node;
+    }
+
     /**
      * Lower optional chains to conditional expressions before legacy passes.
      * This intentionally targets deterministic AST compatibility rather than
@@ -1143,10 +1487,14 @@ module.exports = class Normalizer {
     simplifyVariableDeclaration (node, stack) {
         assert.ok(estest.isNode(node));
 
-        if (!node.declarations.some(decl => hasObjectRest(decl.id))) {
+        var needsLowering = node.declarations.some(decl => hasObjectPattern(decl.id) || hasArrayPattern(decl.id));
+        if (!needsLowering) {
             return node;
         }
-        if (node.declarations.some(decl => hasObjectRest(decl.id) && !canLowerObjectRest(decl.id))) {
+        if (node.declarations.some(decl => hasObjectPattern(decl.id) && !canLowerObjectRest(decl.id))) {
+            return node;
+        }
+        if (node.declarations.some(decl => hasArrayPattern(decl.id) && !canLowerArrayPattern(decl.id))) {
             return node;
         }
 
@@ -1154,10 +1502,17 @@ module.exports = class Normalizer {
         if (parentFrame && parentFrame.node.type == "ForStatement" && parentFrame.key == "init") {
             return node;
         }
+        if (
+            parentFrame &&
+            (parentFrame.node.type == "ForOfStatement" || parentFrame.node.type == "ForInStatement") &&
+            parentFrame.key == "left"
+        ) {
+            return node;
+        }
 
         var statements = [];
         var normalDeclarations = [];
-        var declarationKind = node.kind == "const" ? "var" : node.kind;
+        var declarationKind = "var";
 
         function flushNormalDeclarations() {
             if (normalDeclarations.length > 0) {
@@ -1171,12 +1526,22 @@ module.exports = class Normalizer {
         }
 
         node.declarations.forEach(decl => {
-            if (!hasObjectRest(decl.id)) {
+            if (!hasObjectPattern(decl.id) && !hasArrayPattern(decl.id)) {
                 normalDeclarations.push(decl);
                 return;
             }
 
             flushNormalDeclarations();
+
+            if (hasArrayPattern(decl.id)) {
+                statements = statements.concat(arrayPatternStatements(
+                    "var",
+                    decl.id,
+                    decl.init,
+                    this.rngAlpha
+                ));
+                return;
+            }
 
             var sourceName = `$$destructure$obj$${this.rngAlpha.get()}`;
             statements.push({
@@ -1251,6 +1616,7 @@ module.exports = class Normalizer {
             expression: false,
             async: node.async === true
         };
+        fn = lowerFunctionParameters(fn);
 
         if (!containsThisExpression(fn.body)) {
             return fn;

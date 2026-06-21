@@ -152,6 +152,74 @@ function makeStringByteArrayCall(str) {
     };
 }
 
+function isUnencodedPropertyKey(stack) {
+    var parentFrame = stack[1];
+    if (!parentFrame || parentFrame.node.type != "Property") {
+        return false;
+    }
+    return parentFrame.key == "key" && parentFrame.node.computed !== true;
+}
+
+function isNumericVmInternalFunction(stack) {
+    return stack.some(frame => frame.node && frame.node.veilmark$numericVmInternal === true);
+}
+
+function makeStringExpression(str) {
+    if (str.length == 0) {
+        return { type: "Literal", value: "" };
+    }
+    return makeStringGenerator(str);
+}
+
+function makeStringCallExpression(expr) {
+    return {
+        type: "CallExpression",
+        callee: { type: "Identifier", name: "String" },
+        arguments: [expr]
+    };
+}
+
+function concatExpressions(left, right) {
+    return {
+        type: "BinaryExpression",
+        operator: "+",
+        left: left,
+        right: right
+    };
+}
+
+function makeTemplateExpression(node) {
+    assert.equal(node.type, "TemplateLiteral");
+
+    var expression;
+    for (var i = 0; i < node.quasis.length; i += 1) {
+        var quasi = node.quasis[i];
+        var cooked = quasi.value && typeof quasi.value.cooked == "string" ? quasi.value.cooked : "";
+        var quasiExpression = makeStringExpression(cooked);
+        expression = expression ? concatExpressions(expression, quasiExpression) : quasiExpression;
+
+        if (i < node.expressions.length) {
+            expression = concatExpressions(expression, makeStringCallExpression(node.expressions[i]));
+        }
+    }
+
+    return expression || { type: "Literal", value: "" };
+}
+
+function makeRegexExpression(node) {
+    assert.equal(node.type, "Literal");
+    assert.ok(node.regex);
+
+    return {
+        type: "NewExpression",
+        callee: { type: "Identifier", name: "RegExp" },
+        arguments: [
+            makeStringExpression(node.regex.pattern || ""),
+            makeStringExpression(node.regex.flags || "")
+        ]
+    };
+}
+
 module.exports = class Literals {
 
     constructor (logger) {
@@ -172,6 +240,9 @@ module.exports = class Literals {
         var stringMap = {};
         
         ast = traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(stack)) {
+                return node;
+            }
             if (node.type == "Literal" && typeof node.value == "string") {
                 var idx = stringMap["_" + node.value];
                 if (!idx) {
@@ -217,10 +288,19 @@ module.exports = class Literals {
         assert.ok(estest.isNode(ast));
         
         ast = traverser.traverse(ast, [], (node, stack) => {
+            if (isNumericVmInternalFunction(stack)) {
+                return node;
+            }
+            if (node.type == "TemplateLiteral") {
+                return makeTemplateExpression(node);
+            }
+            if (node.type == "Literal" && node.regex) {
+                return makeRegexExpression(node);
+            }
             if (node.type == "Literal"
                 && typeof node.value == "string"
                 && stack.length > 1
-                && stack[1].node.type != "Property") {
+                && !isUnencodedPropertyKey(stack)) {
                 return makeStringGenerator(node.value);
             }
             

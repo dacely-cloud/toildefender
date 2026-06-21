@@ -13,6 +13,33 @@ function isClassMethodBody(stack) {
     return stack.some(frame => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
 }
 
+function containsLexicalDeclaration(node) {
+    if (
+        node.type == "ClassDeclaration" ||
+        node.type == "FunctionDeclaration" ||
+        (node.type == "VariableDeclaration" && node.kind != "var")
+    ) {
+        return true;
+    }
+
+    var found = false;
+    traverser.traverseEx(node, [], function (child) {
+        if (child != node && estest.isFunction(child)) {
+            return child;
+        }
+        if (
+            child.type == "ClassDeclaration" ||
+            child.type == "FunctionDeclaration" ||
+            (child.type == "VariableDeclaration" && child.kind != "var")
+        ) {
+            found = true;
+            this.abort();
+        }
+        return child;
+    });
+    return found;
+}
+
 module.exports = class DeadCode {
 
     constructor (logger) {
@@ -40,6 +67,11 @@ module.exports = class DeadCode {
                     var len = utils.random(1, node.body.length - pos);
 
                     var varValue = _.sample(KEYWORDS);
+
+                    var selected = node.body.slice(pos, pos + len);
+                    if (selected.some(containsLexicalDeclaration)) {
+                        continue;
+                    }
 
                     var spliced = node.body.splice(pos, len);
                     node.body.splice(pos, 0,
