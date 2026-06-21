@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="./images/toildefender-logo.svg" alt="ToilDefender" width="180" />
+
 # ToilDefender
 
 ### JavaScript code protection for the Toil stack.
@@ -138,6 +140,70 @@ Supported VM syntax currently targets practical protection work: literals,
 locals, arguments, return, assignment, arithmetic, comparisons, logical
 expressions, `if` / `else`, `while`, calls, member reads, arrays, and object
 literals. Unsupported syntax remains native or is skipped by selection.
+
+### All-Modes Output Demo
+
+Input:
+
+```js
+function licenseGate(input) {
+    const total = input.length * 7;
+    return input.charCodeAt(0) === 86
+        ? { ok: true, total: total + 13 }
+        : { ok: false, total: total - 5 };
+}
+
+globalThis.__result = licenseGate("Veilmark");
+```
+
+The demo artifact is generated with every major protection enabled:
+
+```js
+features: {
+    dead_code: true,
+    scope: true,
+    control_flow: true,
+    identifiers: true,
+    numeric_vm: true,
+    object_packing: true,
+    literals: true,
+    mangle: true,
+    compress: true
+},
+protections: {
+    virtualMachine: {
+        enabled: true,
+        mode: "aggressive",
+        bigintBytecode: true,
+        randomizedOpcodes: true,
+        encodeConstants: true,
+        perFunctionDialect: true,
+        virtualize: "all-supported",
+        seed: "readme-all-modes-demo"
+    },
+    hashMesh: {
+        enabled: true,
+        mode: "aggressive",
+        unlock: "per-function",
+        deriveDialectFromMesh: true,
+        bindToVmState: true,
+        encodeChaff: true,
+        chaffRatio: 0.55
+    }
+}
+```
+
+The complete beautified generated output is committed at
+[docs/all-modes-output.demo.js](./docs/all-modes-output.demo.js). It is a real
+673-line artifact from the current generator and executes to:
+
+```json
+{ "ok": true, "total": 69 }
+```
+
+That output contains the full stacked mess: flattened dispatcher runtime,
+identifier rewriting, packed literals, object packing, VM bytecode execution,
+BigInt program blobs, randomized opcode tables, and Hash-Mesh unlock material.
 
 ## Hash-Mesh Unlock
 
@@ -291,6 +357,7 @@ Put real authorization and durable decisions on the server.
 
 ```bash
 npm test
+npm run test:firefox
 npm run pack:dry
 ```
 

@@ -35,6 +35,7 @@
     },
     "scripts": {
         "test": "node --test test/*.test.js",
+        "test:firefox": "node test/firefox-smoke.mjs",
         "pack:dry": "npm pack --dry-run"
     },
     "toildefender": {
@@ -55,7 +56,9 @@
         "utils.js",
         "LICENSE",
         "NOTICE.md",
-        "README.md"
+        "README.md",
+        "images/toildefender-logo.svg",
+        "docs/all-modes-output.demo.js"
     ],
     "dependencies": {
         "@babel/core": "^8.0.1",
@@ -98,5 +101,8 @@
     "publishConfig": {
         "access": "public"
     },
-    "license": "AGPL-3.0"
+    "license": "AGPL-3.0",
+    "devDependencies": {
+        "playwright": "^1.61.0"
+    }
 }
