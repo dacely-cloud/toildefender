@@ -145,6 +145,98 @@ function assertSameRuntimeResult(code, options) {
     assert.deepEqual(run(defended), run(code));
 }
 
+test("mangle supports block-scoped declarations without producing redeclarations", () => {
+    const code = `
+        "use strict";
+        function foldBytes(bytes, seed) {
+            let hash = seed ^ bytes.length;
+            for (let index = 0; index < bytes.length; index += 1) {
+                hash = (hash + bytes[index]) >>> 0;
+            }
+            return hash;
+        }
+        globalThis.__result = foldBytes([1, 2, 3], 9);
+    `;
+    const disabled = Object.fromEntries(Object.keys(FEATURES).map((name) => [name, false]));
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...disabled,
+            compress: true
+        },
+        logLevel: "error",
+        runtimeHelpers: false
+    }).code;
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("mangle preserves shorthand object property keys", () => {
+    const code = `
+        "use strict";
+        function makeReport(checks) {
+            const report = { checks };
+            return {
+                rows: report.checks.length,
+                first: report.checks[0]
+            };
+        }
+        globalThis.__result = makeReport(["a", "b"]);
+    `;
+    const disabled = Object.fromEntries(Object.keys(FEATURES).map((name) => [name, false]));
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...disabled,
+            compress: true
+        },
+        logLevel: "error",
+        runtimeHelpers: false
+    }).code;
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("normalizer preserves single-statement for-of bodies", () => {
+    const code = `
+        var kit = {
+            isArray: Array.isArray,
+            keys: Object.keys,
+            seal: Object.seal,
+            freeze: Object.freeze,
+            proxy: null
+        };
+        function guard(e, n = kit) {
+            let seen = new WeakMap(), trap = {}, lock = e => {
+                if (typeof e != "object" || !e) return e;
+                if (seen.has(e)) return seen.get(e);
+                let out = n.isArray(e) ? [] : {}, guarded = out;
+                seen.set(e, guarded);
+                let record = e;
+                for (let e of n.keys(record)) out[e] = lock(record[e]);
+                return n.seal(out), n.freeze(out), guarded;
+            };
+            return lock(e);
+        }
+        globalThis.__result = guard({ c: [1, 2], r: { a: 1 } });
+    `;
+    const disabled = Object.fromEntries(Object.keys(FEATURES).map((name) => [name, false]));
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        features: {
+            ...disabled,
+            compress: true
+        },
+        logLevel: "error",
+        runtimeHelpers: false
+    }).code;
+
+    assert.deepEqual(run(defended), run(code));
+});
+
 async function assertSameAsyncRuntimeResult(code, options) {
     const defended = defendCode(code, options);
     assert.equal(defended.includes("$$defend"), false);

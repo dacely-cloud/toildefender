@@ -46,8 +46,10 @@ function blockToArray (node) {
     
     if (Array.isArray(node.body)) {
         return node.body;
-    } else {
+    } else if (node.body) {
         return [ node.body ];
+    } else {
+        return [ node ];
     }
 }
 
@@ -376,6 +378,28 @@ function containsThisExpression(node) {
     return found;
 }
 
+function blockNeedsLexicalScope(node) {
+    if (node.type != "BlockStatement") {
+        return false;
+    }
+
+    var needsScope = false;
+    traverser.traverseEx(node, [], function (child) {
+        if (child != node && estest.isFunction(child)) {
+            return child;
+        }
+        if (
+            (child.type == "VariableDeclaration" && child.kind != "var")
+            || child.type == "ClassDeclaration"
+        ) {
+            needsScope = true;
+            this.abort();
+        }
+        return child;
+    });
+    return needsScope;
+}
+
 module.exports = class Normalizer {
 
     constructor (logger) {
@@ -439,10 +463,13 @@ module.exports = class Normalizer {
     simplifyBlockStatement (node) {
         assert.ok(estest.isNode(node));
     
-        function getBlockBodys(node) {
+        function getBlockBodys(node, isRoot) {
             if (node.type == "Program" || node.type == "BlockStatement") {
+                if (!isRoot && blockNeedsLexicalScope(node)) {
+                    return [ node ];
+                }
                 var stmts = [];
-                node.body.forEach(stmt => utils.push(stmts, getBlockBodys(stmt)));
+                node.body.forEach(stmt => utils.push(stmts, getBlockBodys(stmt, false)));
                 return stmts;
             } else {
                 return [ node ];
@@ -451,7 +478,7 @@ module.exports = class Normalizer {
         
         return {
             type: node.type,
-            body: getBlockBodys(node)
+            body: getBlockBodys(node, true)
         };
     }
 
