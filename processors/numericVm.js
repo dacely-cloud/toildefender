@@ -36,6 +36,21 @@ function veilmark$numericVmPow(a, b) {
     return Math.pow(a, b);
 }
 
+function veilmark$numericVmDigit(program, baseBig, index, powers) {
+    if (powers) {
+        while (powers.length <= index) {
+            powers[powers.length] = powers[powers.length - 1] * baseBig;
+        }
+        return Number((program / powers[index]) % baseBig);
+    }
+    var pow = BigInt(1);
+    while (index > 0) {
+        pow *= baseBig;
+        index -= 1;
+    }
+    return Number((program / pow) % baseBig);
+}
+
 function veilmark$hashMeshMix(current, value) {
     var h = (current ^ value) >>> 0;
     h = Math.imul(h ^ (h >>> 16), 2246822507) >>> 0;
@@ -87,33 +102,20 @@ function veilmark$hashMeshStream(key, index, base, salt) {
     return hash % base;
 }
 
-function veilmark$hashMeshUnlock(program, base, tokenCount, seed, tag, ops, mesh) {
-    var key = veilmark$hashMeshKey(mesh, base, tokenCount, seed, tag, ops);
-    var salt = mesh[5] >>> 0;
-    var baseBig = BigInt(base);
-    var out = BigInt(0);
-    var pow = BigInt(1);
-    var i = 0;
-    while (i < tokenCount) {
-        var cipher = Number(program % baseBig);
-        program = program / baseBig;
-        var plain = (cipher - veilmark$hashMeshStream(key, i, base, salt) + base) % base;
-        out += BigInt(plain) * pow;
-        pow *= baseBig;
-        i += 1;
-    }
-    return out;
+function veilmark$hashMeshUnlock(program, base, baseBig, index, key, salt, powers) {
+    var cipher = veilmark$numericVmDigit(program, baseBig, index, powers);
+    return (cipher - veilmark$hashMeshStream(key, index, base, salt) + base) % base;
 }
 
 function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, argsLike, self, ops, mesh) {
-    if (mesh) {
-        program = veilmark$hashMeshUnlock(program, base, tokenCount, seed, tag, ops, mesh);
-    }
-
-    var tokens = [];
-    var state = seed >>> 0;
-    var seen = seed >>> 0;
     var baseBig = BigInt(base);
+    var digitPowers = [BigInt(1)];
+    var meshKey = 0;
+    var meshSalt = 0;
+    if (mesh) {
+        meshKey = veilmark$hashMeshKey(mesh, base, tokenCount, seed, tag, ops);
+        meshSalt = mesh[5] >>> 0;
+    }
 
     function inverse(value, modulo) {
         var t = 0, nt = 1;
@@ -136,28 +138,86 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         return (mixed ^ (mixed >>> 13)) >>> 0;
     }
 
+    function encryptedAt(index) {
+        if (mesh) return veilmark$hashMeshUnlock(program, base, baseBig, index, meshKey, meshSalt, digitPowers);
+        return veilmark$numericVmDigit(program, baseBig, index, digitPowers);
+    }
+
     var i = 0;
+    var seen = seed >>> 0;
     while (i < tokenCount) {
-        var encrypted = Number(program % baseBig);
-        program = program / baseBig;
-        var mul = 1 + ((state >>> 5) % (base - 1));
-        var add = state % base;
-        var plain = (((encrypted - add + base) % base) * inverse(mul, base)) % base;
-        tokens.push(plain);
+        var encrypted = encryptedAt(i);
         seen = mix(seen, encrypted, i);
-        state = mix(state, encrypted, i);
         i += 1;
     }
 
     if ((seen >>> 0) !== (tag >>> 0)) throw new Error("invalid numeric vm program");
 
-    var stack = [];
-    var locals = [];
+    var decodeIndex = 0;
+    var decodeState = seed >>> 0;
+
+    function stateBefore(index) {
+        if (index < decodeIndex) {
+            decodeIndex = 0;
+            decodeState = seed >>> 0;
+        }
+        while (decodeIndex < index) {
+            var skipped = encryptedAt(decodeIndex);
+            decodeState = mix(decodeState, skipped, decodeIndex);
+            decodeIndex += 1;
+        }
+        return decodeState;
+    }
+
+    function decodeAt(index) {
+        var state = stateBefore(index);
+        var encrypted = encryptedAt(index);
+        var mul = 1 + ((state >>> 5) % (base - 1));
+        var add = state % base;
+        var plain = (((encrypted - add + base) % base) * inverse(mul, base)) % base;
+        if (index === decodeIndex) {
+            decodeState = mix(state, encrypted, index);
+            decodeIndex = index + 1;
+        }
+        return plain;
+    }
+
+    var layout = seed & 1;
+    var stack = layout ? null : [];
+    var locals = layout ? null : [];
+    var cells = layout ? { s: [], l: Object.create(null) } : null;
     var frameArgs = Array.prototype.slice.call(argsLike);
     var ip = 0;
 
+    function push(value) {
+        if (layout) cells.s[cells.s.length] = value;
+        else stack.push(value);
+    }
+
+    function pop() {
+        return layout ? cells.s.pop() : stack.pop();
+    }
+
+    function peek() {
+        var current = layout ? cells.s : stack;
+        return current[current.length - 1];
+    }
+
+    function loadLocal(slot) {
+        return layout ? cells.l["$" + slot] : locals[slot];
+    }
+
+    function storeLocal(slot, value) {
+        if (layout) cells.l["$" + slot] = value;
+        else locals[slot] = value;
+        return value;
+    }
+
     function read() {
-        return tokens[ip++];
+        if (ip < 0 || ip >= tokenCount) throw new Error("invalid virtual opcode");
+        var value = decodeAt(ip);
+        ip += 1;
+        return value;
     }
 
     function readUnsigned() {
@@ -181,7 +241,7 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         var i = count;
         while (i > 0) {
             i -= 1;
-            out[i] = stack.pop();
+            out[i] = pop();
         }
         return out;
     }
@@ -189,49 +249,49 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
     while (true) {
         var op = read();
         if (op === ops[0]) continue;
-        if (op === ops[1]) { stack.push(undefined); continue; }
-        if (op === ops[2]) { stack.push(null); continue; }
-        if (op === ops[3]) { stack.push(true); continue; }
-        if (op === ops[4]) { stack.push(false); continue; }
-        if (op === ops[5]) { stack.push(readUnsigned()); continue; }
-        if (op === ops[6]) { stack.push(constants[readUnsigned()]); continue; }
-        if (op === ops[7]) { stack.push(frameArgs[readUnsigned()]); continue; }
-        if (op === ops[8]) { stack.push(locals[readUnsigned()]); continue; }
-        if (op === ops[9]) { locals[readUnsigned()] = stack.pop(); continue; }
-        if (op === ops[10]) { stack.push(stack[stack.length - 1]); continue; }
-        if (op === ops[11]) { stack.pop(); continue; }
-        if (op === ops[12]) { var addB = stack.pop(); var addA = stack.pop(); stack.push(addA + addB); continue; }
-        if (op === ops[13]) { var subB = stack.pop(); var subA = stack.pop(); stack.push(subA - subB); continue; }
-        if (op === ops[14]) { var mulB = stack.pop(); var mulA = stack.pop(); stack.push(mulA * mulB); continue; }
-        if (op === ops[15]) { var divB = stack.pop(); var divA = stack.pop(); stack.push(divA / divB); continue; }
-        if (op === ops[16]) { var modB = stack.pop(); var modA = stack.pop(); stack.push(modA % modB); continue; }
-        if (op === ops[17]) { var powB = stack.pop(); var powA = stack.pop(); stack.push(veilmark$numericVmPow(powA, powB)); continue; }
-        if (op === ops[18]) { stack.push(-stack.pop()); continue; }
-        if (op === ops[19]) { stack.push(!stack.pop()); continue; }
-        if (op === ops[20]) { stack.push(~stack.pop()); continue; }
-        if (op === ops[21]) { var eqB = stack.pop(); var eqA = stack.pop(); stack.push(eqA == eqB); continue; }
-        if (op === ops[22]) { var neqB = stack.pop(); var neqA = stack.pop(); stack.push(neqA != neqB); continue; }
-        if (op === ops[23]) { var seqB = stack.pop(); var seqA = stack.pop(); stack.push(seqA === seqB); continue; }
-        if (op === ops[24]) { var sneB = stack.pop(); var sneA = stack.pop(); stack.push(sneA !== sneB); continue; }
-        if (op === ops[25]) { var ltB = stack.pop(); var ltA = stack.pop(); stack.push(ltA < ltB); continue; }
-        if (op === ops[26]) { var lteB = stack.pop(); var lteA = stack.pop(); stack.push(lteA <= lteB); continue; }
-        if (op === ops[27]) { var gtB = stack.pop(); var gtA = stack.pop(); stack.push(gtA > gtB); continue; }
-        if (op === ops[28]) { var gteB = stack.pop(); var gteA = stack.pop(); stack.push(gteA >= gteB); continue; }
+        if (op === ops[1]) { push(undefined); continue; }
+        if (op === ops[2]) { push(null); continue; }
+        if (op === ops[3]) { push(true); continue; }
+        if (op === ops[4]) { push(false); continue; }
+        if (op === ops[5]) { push(readUnsigned()); continue; }
+        if (op === ops[6]) { push(constants[readUnsigned()]); continue; }
+        if (op === ops[7]) { push(frameArgs[readUnsigned()]); continue; }
+        if (op === ops[8]) { push(loadLocal(readUnsigned())); continue; }
+        if (op === ops[9]) { storeLocal(readUnsigned(), pop()); continue; }
+        if (op === ops[10]) { push(peek()); continue; }
+        if (op === ops[11]) { pop(); continue; }
+        if (op === ops[12]) { var addB = pop(); var addA = pop(); push(addA + addB); continue; }
+        if (op === ops[13]) { var subB = pop(); var subA = pop(); push(subA - subB); continue; }
+        if (op === ops[14]) { var mulB = pop(); var mulA = pop(); push(mulA * mulB); continue; }
+        if (op === ops[15]) { var divB = pop(); var divA = pop(); push(divA / divB); continue; }
+        if (op === ops[16]) { var modB = pop(); var modA = pop(); push(modA % modB); continue; }
+        if (op === ops[17]) { var powB = pop(); var powA = pop(); push(veilmark$numericVmPow(powA, powB)); continue; }
+        if (op === ops[18]) { push(-pop()); continue; }
+        if (op === ops[19]) { push(!pop()); continue; }
+        if (op === ops[20]) { push(~pop()); continue; }
+        if (op === ops[21]) { var eqB = pop(); var eqA = pop(); push(eqA == eqB); continue; }
+        if (op === ops[22]) { var neqB = pop(); var neqA = pop(); push(neqA != neqB); continue; }
+        if (op === ops[23]) { var seqB = pop(); var seqA = pop(); push(seqA === seqB); continue; }
+        if (op === ops[24]) { var sneB = pop(); var sneA = pop(); push(sneA !== sneB); continue; }
+        if (op === ops[25]) { var ltB = pop(); var ltA = pop(); push(ltA < ltB); continue; }
+        if (op === ops[26]) { var lteB = pop(); var lteA = pop(); push(lteA <= lteB); continue; }
+        if (op === ops[27]) { var gtB = pop(); var gtA = pop(); push(gtA > gtB); continue; }
+        if (op === ops[28]) { var gteB = pop(); var gteA = pop(); push(gteA >= gteB); continue; }
         if (op === ops[29]) { var jmp = readSigned(); ip += jmp; continue; }
-        if (op === ops[30]) { var jf = readSigned(); if (!stack.pop()) ip += jf; continue; }
-        if (op === ops[31]) { var jt = readSigned(); if (stack.pop()) ip += jt; continue; }
-        if (op === ops[32]) { readUnsigned(); var argc = readUnsigned(); var ca = popArgs(argc); var fn = stack.pop(); stack.push(fn.apply(undefined, ca)); continue; }
-        if (op === ops[33]) { readUnsigned(); var largc = readUnsigned(); var la = popArgs(largc); var lfn = constants[readUnsigned()]; stack.push(lfn.apply(undefined, la)); continue; }
-        if (op === ops[34]) { var gpKey = stack.pop(); var gpObj = stack.pop(); stack.push(gpObj[gpKey]); continue; }
-        if (op === ops[35]) { var spValue = stack.pop(); var spKey = stack.pop(); var spObj = stack.pop(); spObj[spKey] = spValue; stack.push(spValue); continue; }
-        if (op === ops[36]) { var ac = readUnsigned(); var arr = new Array(ac); var ai = ac; while (ai > 0) { ai -= 1; arr[ai] = stack.pop(); } stack.push(arr); continue; }
-        if (op === ops[37]) { var oc = readUnsigned(); var pairs = new Array(oc); var oi = oc; while (oi > 0) { oi -= 1; var ov = stack.pop(); var ok = stack.pop(); pairs[oi] = [ok, ov]; } var obj = {}; var pi = 0; while (pi < oc) { obj[pairs[pi][0]] = pairs[pi][1]; pi += 1; } stack.push(obj); continue; }
-        if (op === ops[38]) return stack.pop();
-        if (op === ops[39]) throw stack.pop();
-        if (op === ops[40]) { stack.push(self); continue; }
-        if (op === ops[41]) { stack.push(argsLike); continue; }
-        if (op === ops[42]) { stack.push(typeof stack.pop()); continue; }
-        if (op === ops[43]) { var mc = readUnsigned(); var ma = popArgs(mc); var mk = stack.pop(); var mo = stack.pop(); stack.push(mo[mk].apply(mo, ma)); continue; }
+        if (op === ops[30]) { var jf = readSigned(); if (!pop()) ip += jf; continue; }
+        if (op === ops[31]) { var jt = readSigned(); if (pop()) ip += jt; continue; }
+        if (op === ops[32]) { readUnsigned(); var argc = readUnsigned(); var ca = popArgs(argc); var fn = pop(); push(fn.apply(undefined, ca)); continue; }
+        if (op === ops[33]) { readUnsigned(); var largc = readUnsigned(); var la = popArgs(largc); var lfn = constants[readUnsigned()]; push(lfn.apply(undefined, la)); continue; }
+        if (op === ops[34]) { var gpKey = pop(); var gpObj = pop(); push(gpObj[gpKey]); continue; }
+        if (op === ops[35]) { var spValue = pop(); var spKey = pop(); var spObj = pop(); spObj[spKey] = spValue; push(spValue); continue; }
+        if (op === ops[36]) { var ac = readUnsigned(); var arr = new Array(ac); var ai = ac; while (ai > 0) { ai -= 1; arr[ai] = pop(); } push(arr); continue; }
+        if (op === ops[37]) { var oc = readUnsigned(); var pairs = new Array(oc); var oi = oc; while (oi > 0) { oi -= 1; var ov = pop(); var ok = pop(); pairs[oi] = [ok, ov]; } var obj = {}; var pi = 0; while (pi < oc) { obj[pairs[pi][0]] = pairs[pi][1]; pi += 1; } push(obj); continue; }
+        if (op === ops[38]) return pop();
+        if (op === ops[39]) throw pop();
+        if (op === ops[40]) { push(self); continue; }
+        if (op === ops[41]) { push(argsLike); continue; }
+        if (op === ops[42]) { push(typeof pop()); continue; }
+        if (op === ops[43]) { var mc = readUnsigned(); var ma = popArgs(mc); var mk = pop(); var mo = pop(); push(mo[mk].apply(mo, ma)); continue; }
         throw new Error("invalid virtual opcode");
     }
 }

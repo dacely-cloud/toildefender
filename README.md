@@ -155,7 +155,8 @@ function licenseGate(input) {
 globalThis.__result = licenseGate("Veilmark");
 ```
 
-The demo artifact is generated with every major protection enabled:
+The demo artifact is generated with every major protection enabled and
+compression disabled so the runtime stays readable:
 
 ```js
 features: {
@@ -167,7 +168,7 @@ features: {
     object_packing: true,
     literals: true,
     mangle: true,
-    compress: true
+    compress: false
 },
 protections: {
     virtualMachine: {
@@ -194,19 +195,19 @@ protections: {
 
 The complete beautified generated output is committed at
 [docs/all-modes-output.demo.js](./docs/all-modes-output.demo.js). It is a real
-673-line artifact from the current generator and executes to:
+961-line artifact from the current generator and executes to:
 
 Output excerpt:
 
 ```js
 (function () {
   function a(f, j) {
-    var b = new Array(96);
+    var b = new Array(105);
     ;
     var c = arguments;
     while (true) try {
       switch (f) {
-        case 25271:
+        case 8455:
           b[11] = c[11];
           b[12] = c[10];
           b[13] = c[9];
@@ -217,58 +218,63 @@ Output excerpt:
           b[18] = c[4];
           b[19] = c[3];
           b[20] = c[2];
-          b[21] = e(a, 26903, b, c[1]);
-          b[22] = e(a, 13834, b, c[1]);
-          b[23] = e(a, 24871, b, c[1]);
-          b[24] = e(a, 3126, b, c[1]);
-          b[25] = e(a, 24897, b, c[1]);
-          b[26] = e(a, 32340, b, c[1]);
+          b[21] = e(a, 739, b, c[1]);
+          b[22] = e(a, 22884, b, c[1]);
+          b[23] = e(a, 24756, b, c[1]);
+          b[24] = e(a, 11593, b, c[1]);
+          b[25] = e(a, 5522, b, c[1]);
+          b[26] = e(a, 21472, b, c[1]);
+          b[27] = e(a, 16279, b, c[1]);
+          b[28] = e(a, 17195, b, c[1]);
+          b[29] = e(a, 27528, b, c[1]);
+          b[30] = e(a, 23881, b, c[1]);
+          b[31] = e(a, 14569, b, c[1]);
+          b[32] = e(a, 21646, b, c[1]);
+          b[33] = e(a, 2482, b, c[1]);
+          b[34] = e(a, 15554, b, c[1]);
+          b[35] = BigInt(b[19]);
+          b[36] = [1n];
+          b[37] = c[1][10][1];
+          b[38] = c[1][10][1];
           if (b[11]) {
-            b[20] = c[1][2](b[20], b[19], b[18], b[17], b[16], b[12], b[11]);
+            b[37] = c[1][4](b[11], b[19], b[18], b[17], b[16], b[12]);
+            b[38] = b[11][c[1][10][24]] >>> c[1][10][1];
           }
-          b[27] = [];
-          b[28] = b[17] >>> c[1][9][1];
-          b[29] = b[17] >>> c[1][9][1];
-          b[30] = BigInt(b[19]);
-          b[31] = c[1][9][1];
-          while (b[31] < b[18]) {
-            b[32] = Number(b[20] % b[30]);
-            b[20] = b[20] / b[30];
-            b[33] = c[1][9][5] + (b[28] >>> c[1][9][24]) % (b[19] - c[1][9][5]);
-            b[34] = b[28] % b[19];
-            b[35] = (b[32] - b[34] + b[19]) % b[19] * b[26](b[33], b[19]) % b[19];
-            b[27][c[1][9][29]](b[35]);
-            b[29] = b[25](b[29], b[32], b[31]);
-            b[28] = b[25](b[28], b[32], b[31]);
-            b[31] += c[1][9][5];
+          b[39] = c[1][10][1];
+          b[40] = b[17] >>> c[1][10][1];
+          while (b[39] < b[18]) {
+            b[41] = b[32](b[39]);
+            b[40] = b[33](b[40], b[41], b[39]);
+            b[39] += c[1][10][5];
           }
-          if (b[29] >>> c[1][9][1] !== b[16] >>> c[1][9][1]) throw new Error(c[1][9][30]);
-          b[36] = [];
-          b[37] = [];
-          b[38] = Array[c[1][9][31]][c[1][9][32]][c[1][9][33]](b[14]);
-          b[39] = c[1][9][1];
-          while (c[1][9][38]) {
-            b[40] = b[24]();
-            if (b[40] === b[12][c[1][9][1]]) continue;
-            if (b[40] === b[12][c[1][9][5]]) {
-              b[36][c[1][9][29]](undefined);
-              continue;
-            }
-            if (b[40] === b[12][c[1][9][28]]) {
-              b[36][c[1][9][29]](c[1][9][39]);
-              continue;
-            }
+          if (b[40] >>> c[1][10][1] !== b[16] >>> c[1][10][1]) throw new Error(c[1][10][29]);
+          b[42] = c[1][10][1];
+          b[43] = b[17] >>> c[1][10][1];
+          b[44] = b[17] & c[1][10][5];
+          b[45] = b[44] ? c[1][10][30] : [];
+          b[46] = b[44] ? c[1][10][30] : [];
+          b[47] = b[44] ? h([
+            /* encoded layout keys */
+          ], [
+            [],
+            Object[c[1][10][36]](c[1][10][30])
+          ]) : c[1][10][30];
 
-            /* 600+ more generated lines:
-               dispatcher cases, encoded literals, VM bytecode decode,
-               BigInt program blobs, randomized opcode tables, and Hash-Mesh unlock */
+          /* 900+ more generated lines:
+             dispatcher cases, encoded literals, streaming VM token reads,
+             seed-selected stack/local storage, BigInt program blobs,
+             randomized opcode tables, and Hash-Mesh unwrap */
 
-        case 11237:
+        case 11593:
+          if (c[1][49] < c[2][10][1] || c[1][49] >= c[1][18]) throw new Error(c[2][10][45]);
+          b[1] = c[1][30](c[1][49]);
+          c[1][49] += c[2][10][5];
+          return b[1];
+        case 5206:
           b[1] = '';
           b[1] += d(86, 101);
-          b[1] += d(105, 108, 109, 97);
-          b[1] += d(114);
-          b[1] += d(107);
+          b[1] += d(105, 108, 109);
+          b[1] += d(97, 114, 107);
           return b[1];
       }
     } catch (a) {
@@ -279,7 +285,7 @@ Output excerpt:
       }
     }
   }
-  a(4089, {});
+  a(17701, {});
 })();
 ```
 

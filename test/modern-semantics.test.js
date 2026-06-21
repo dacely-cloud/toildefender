@@ -277,6 +277,24 @@ test("virtual machine protection emits BigInt literal bytecode and removes sourc
     assert.deepEqual(run(defended), run(code));
 });
 
+test("virtual machine runtime streams bytecode instead of materializing decoded tokens", () => {
+    const code = `
+        function bob(value) {
+            var total = value + 4;
+            return total * 3;
+        }
+        globalThis.__result = bob(9);
+    `;
+    const defended = defendVmCode(code);
+
+    assert.equal(defended.includes("var tokens = []"), false);
+    assert.equal(defended.includes("tokens.push"), false);
+    assert.match(defended, /function veilmark\$numericVmDigit/);
+    assert.match(defended, /var layout = seed & 1/);
+    assert.match(defended, /Object\.create\(null\)/);
+    assert.deepEqual(run(defended), run(code));
+});
+
 test("virtual machine protection preserves loops, method calls, arrays, and objects", () => {
     const code = `
         function check(input) {
