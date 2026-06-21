@@ -1713,7 +1713,7 @@ test("virtual machine protection survives full obfuscation pipeline", () => {
     assert.deepEqual(run(result.code), run(code));
 });
 
-test("virtual machine runtime helper names survive final modern mangle", () => {
+test("virtual machine runtime helper names mangle consistently in final mangle", () => {
     const code = `
         class Runner {
             static run(input) {
@@ -1752,6 +1752,8 @@ test("virtual machine runtime helper names survive final modern mangle", () => {
         logLevel: "error"
     });
 
+    assert.doesNotMatch(result.code, /veilmark\$numericVmString/);
+    assert.doesNotMatch(result.code, /veilmark\$numericVmRun/);
     assert.deepEqual(run(result.code), run(code));
 });
 
