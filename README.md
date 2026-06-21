@@ -196,6 +196,93 @@ The complete beautified generated output is committed at
 [docs/all-modes-output.demo.js](./docs/all-modes-output.demo.js). It is a real
 673-line artifact from the current generator and executes to:
 
+Output excerpt:
+
+```js
+(function () {
+  function a(f, j) {
+    var b = new Array(96);
+    ;
+    var c = arguments;
+    while (true) try {
+      switch (f) {
+        case 25271:
+          b[11] = c[11];
+          b[12] = c[10];
+          b[13] = c[9];
+          b[14] = c[8];
+          b[15] = c[7];
+          b[16] = c[6];
+          b[17] = c[5];
+          b[18] = c[4];
+          b[19] = c[3];
+          b[20] = c[2];
+          b[21] = e(a, 26903, b, c[1]);
+          b[22] = e(a, 13834, b, c[1]);
+          b[23] = e(a, 24871, b, c[1]);
+          b[24] = e(a, 3126, b, c[1]);
+          b[25] = e(a, 24897, b, c[1]);
+          b[26] = e(a, 32340, b, c[1]);
+          if (b[11]) {
+            b[20] = c[1][2](b[20], b[19], b[18], b[17], b[16], b[12], b[11]);
+          }
+          b[27] = [];
+          b[28] = b[17] >>> c[1][9][1];
+          b[29] = b[17] >>> c[1][9][1];
+          b[30] = BigInt(b[19]);
+          b[31] = c[1][9][1];
+          while (b[31] < b[18]) {
+            b[32] = Number(b[20] % b[30]);
+            b[20] = b[20] / b[30];
+            b[33] = c[1][9][5] + (b[28] >>> c[1][9][24]) % (b[19] - c[1][9][5]);
+            b[34] = b[28] % b[19];
+            b[35] = (b[32] - b[34] + b[19]) % b[19] * b[26](b[33], b[19]) % b[19];
+            b[27][c[1][9][29]](b[35]);
+            b[29] = b[25](b[29], b[32], b[31]);
+            b[28] = b[25](b[28], b[32], b[31]);
+            b[31] += c[1][9][5];
+          }
+          if (b[29] >>> c[1][9][1] !== b[16] >>> c[1][9][1]) throw new Error(c[1][9][30]);
+          b[36] = [];
+          b[37] = [];
+          b[38] = Array[c[1][9][31]][c[1][9][32]][c[1][9][33]](b[14]);
+          b[39] = c[1][9][1];
+          while (c[1][9][38]) {
+            b[40] = b[24]();
+            if (b[40] === b[12][c[1][9][1]]) continue;
+            if (b[40] === b[12][c[1][9][5]]) {
+              b[36][c[1][9][29]](undefined);
+              continue;
+            }
+            if (b[40] === b[12][c[1][9][28]]) {
+              b[36][c[1][9][29]](c[1][9][39]);
+              continue;
+            }
+
+            /* 600+ more generated lines:
+               dispatcher cases, encoded literals, VM bytecode decode,
+               BigInt program blobs, randomized opcode tables, and Hash-Mesh unlock */
+
+        case 11237:
+          b[1] = '';
+          b[1] += d(86, 101);
+          b[1] += d(105, 108, 109, 97);
+          b[1] += d(114);
+          b[1] += d(107);
+          return b[1];
+      }
+    } catch (a) {
+      veilmark$tobethrown = null;
+      switch (f) {
+        default:
+          throw a;
+      }
+    }
+  }
+  a(4089, {});
+})();
+```
+
 ```json
 { "ok": true, "total": 69 }
 ```
