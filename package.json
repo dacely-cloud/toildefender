@@ -1,6 +1,6 @@
 {
     "name": "@dacely/toildefender",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Modern JavaScript code protection, bytecode virtualization, and obfuscation for the Toil tech stack.",
     "author": "Dacely",
     "contributors": [
