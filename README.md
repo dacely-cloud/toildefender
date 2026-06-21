@@ -9,7 +9,7 @@
 
 <br/>
 
-[![npm](https://img.shields.io/npm/v/@dacely-cloud/toildefender.svg?color=2563ff&label=npm&labelColor=0e1520)](https://www.npmjs.com/package/@dacely-cloud/toildefender)
+[![npm](https://img.shields.io/npm/v/@dacely/toildefender.svg?color=2563ff&label=npm&labelColor=0e1520)](https://www.npmjs.com/package/@dacely/toildefender)
 [![node](https://img.shields.io/badge/node-%3E%3D24-22e3ab.svg?labelColor=0e1520)](https://nodejs.org/)
 [![vm](https://img.shields.io/badge/VM-BigInt_bytecode-7c3aed.svg?labelColor=0e1520)](#virtual-machine-protection)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-8b9ab4.svg?labelColor=0e1520)](./LICENSE)
@@ -20,7 +20,7 @@
 
 ToilDefender is Dacely's maintained JavaScript protection layer for the Toil
 technology stack. It started from the original `defendjs` project, but this
-fork is now maintained as its own package: `@dacely-cloud/toildefender`.
+fork is now maintained as its own package: `@dacely/toildefender`.
 
 The goal is not to make client-side JavaScript impossible to analyze. That is
 not a real promise. The goal is to raise reverse-engineering cost by removing
@@ -29,11 +29,11 @@ constants, and optionally compiling selected functions into randomized numeric
 VM programs.
 
 ```bash
-npm install @dacely-cloud/toildefender
+npm install @dacely/toildefender
 ```
 
 ```js
-const toildefender = require("@dacely-cloud/toildefender");
+const toildefender = require("@dacely/toildefender");
 
 const result = toildefender.do({
     code: source,
@@ -249,7 +249,7 @@ machine.
 Install globally or run through `npx`:
 
 ```bash
-npm install -g @dacely-cloud/toildefender
+npm install -g @dacely/toildefender
 toildefender --help
 ```
 
@@ -276,7 +276,7 @@ but new projects should use `toildefender`.
 ## API
 
 ```js
-const toildefender = require("@dacely-cloud/toildefender");
+const toildefender = require("@dacely/toildefender");
 
 const result = toildefender.do({
     code: "function add(a,b){ return a + b } globalThis.x = add(1,2)",
