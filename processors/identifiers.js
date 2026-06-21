@@ -86,21 +86,7 @@ module.exports = class Identifiers {
         ast = traverser.traverse(ast, [], (node, stack) => {
             if (node.type == "ObjectExpression") {
                 if (options.objectPacking === false) {
-                    var arr = [];
-                    node.properties.forEach(prop => {
-                        arr.push(literal(objectKey(prop)));
-                        arr.push(prop.value);
-                    });
-                    return {
-                        type: "CallExpression",
-                        callee: { type: "Identifier", name: "veilmark$toObject"  },
-                        arguments: [
-                            {
-                                type: "ArrayExpression",
-                                elements: arr
-                            }
-                        ]
-                    };
+                    return node;
                 }
 
                 var salt = utils.random(1, 65535);

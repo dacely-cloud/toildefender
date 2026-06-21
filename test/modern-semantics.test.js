@@ -74,12 +74,13 @@ function runStrict(code) {
     return run(`"use strict";\n${code}`);
 }
 
-function defendCode(code) {
+function defendCode(code, options = {}) {
     const result = toildefender.do({
         code,
         modulesCode: {},
         features: FEATURES,
-        logLevel: "error"
+        logLevel: "error",
+        ...options
     });
     return result.code;
 }
@@ -134,8 +135,8 @@ function assertSameRuntimeResult(code) {
     assert.deepEqual(run(defended), run(code));
 }
 
-async function assertSameAsyncRuntimeResult(code) {
-    const defended = defendCode(code);
+async function assertSameAsyncRuntimeResult(code, options) {
+    const defended = defendCode(code, options);
     assert.equal(defended.includes("$$defend"), false);
     assert.equal(defended.includes("defendjs"), false);
     assert.deepEqual(await runAsync(defended), await runAsync(code));
@@ -233,7 +234,23 @@ test("preserves try/finally break and continue behavior", () => {
     `);
 });
 
-test("preserves Babel async regenerator callee bindings", async () => {
+test("flattens native async functions with an async dispatcher", async () => {
+    const code = `
+        async function load(value) {
+            const next = await Promise.resolve(value + 2);
+            return next * 3;
+        }
+        load(4).then((value) => {
+            globalThis.__result = value;
+        });
+    `;
+    const defended = defendCode(code);
+
+    assert.equal(/_regenerator|asyncGeneratorStep|Generator is already running/.test(defended), false);
+    assert.deepEqual(await runAsync(defended), await runAsync(code));
+});
+
+test("preserves Babel async regenerator callee bindings when async lowering is requested", async () => {
     await assertSameAsyncRuntimeResult(`
         async function load(value) {
             const next = await Promise.resolve(value + 2);
@@ -242,7 +259,42 @@ test("preserves Babel async regenerator callee bindings", async () => {
         load(4).then((value) => {
             globalThis.__result = value;
         });
+    `, {
+        babelPreserveAsync: false
+    });
+});
+
+test("flattens native generator functions with a generator dispatcher", () => {
+    assertSameRuntimeResult(`
+        function* values() {
+            yield 1;
+            return 2;
+        }
+        const iterator = values();
+        globalThis.__result = [
+            iterator.next().value,
+            iterator.next().value
+        ];
     `);
+});
+
+test("lowers spread append calls without relying on Babel", () => {
+    const code = `
+        function collect(moduleRows) {
+            var signals = [];
+            signals.push(...moduleRows);
+            return {
+                count: signals.length,
+                first: signals[0].id,
+                last: signals[signals.length - 1].id
+            };
+        }
+        globalThis.__result = collect([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    `;
+    const defended = defendCode(code, { babel: false });
+
+    assert.equal(defended.includes("..."), false);
+    assert.deepEqual(run(defended), run(code));
 });
 
 test("control-flow flattener emits declared tobethrown sentinel", () => {
@@ -372,7 +424,7 @@ test("packs object literal keys into a numeric schema instead of alternating key
     assert.deepEqual(run(defended), run(code));
 });
 
-test("can disable object key packing with the object_packing feature flag", () => {
+test("can disable object literal arrayization with the object_packing feature flag", () => {
     const code = `
         globalThis.__result = {
             alpha: 1,
@@ -384,10 +436,49 @@ test("can disable object key packing with the object_packing feature flag", () =
         object_packing: false
     });
 
-    assert.match(defended, /veilmark\$toObject\(\s*\[/);
+    assert.doesNotMatch(defended, /veilmark\$toObject\(\s*\[/);
     assert.equal(defended.includes("alpha"), true);
     assert.equal(defended.includes("beta"), true);
     assert.deepEqual(run(defended), run(code));
+});
+
+test("object packing injects runtime helper when scope flattening is disabled", () => {
+    const code = `
+        const packet = {
+            count: 2,
+            rows: [{ id: 1 }, { id: 2 }]
+        };
+        globalThis.__result = packet;
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: false,
+        control_flow: false,
+        identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.match(defended, /function veilmark\$toObject/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("object packing helpers are visible from async dispatchers", async () => {
+    await assertSameAsyncRuntimeResult(`
+        async function collect() {
+            await Promise.resolve(1);
+            const rows = [
+                { id: "alpha", value: 2 },
+                { id: "beta", value: 3 }
+            ];
+            globalThis.__result = rows.map((row) => row.id + ":" + row.value).join("|");
+        }
+
+        collect();
+    `);
 });
 
 test("virtual machine protection emits BigInt literal bytecode and removes source body", () => {

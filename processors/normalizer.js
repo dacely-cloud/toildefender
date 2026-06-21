@@ -51,6 +51,57 @@ function blockToArray (node) {
     }
 }
 
+function hasSpreadElement(nodes) {
+    return nodes.some(node => node && node.type == "SpreadElement");
+}
+
+function isSimpleThisReceiver(node) {
+    return node.type == "Identifier" || node.type == "ThisExpression";
+}
+
+function buildArrayConcat(parts) {
+    if (parts.length == 0) {
+        return { type: "ArrayExpression", elements: [] };
+    }
+    if (parts.length == 1) {
+        return parts[0];
+    }
+    return {
+        type: "CallExpression",
+        callee: {
+            type: "MemberExpression",
+            object: parts[0],
+            property: { type: "Identifier", name: "concat" },
+            computed: false
+        },
+        arguments: parts.slice(1)
+    };
+}
+
+function spreadArgumentsToArray(args) {
+    var parts = [];
+    var pending = [];
+
+    function flushPending() {
+        if (pending.length > 0) {
+            parts.push({ type: "ArrayExpression", elements: pending });
+            pending = [];
+        }
+    }
+
+    args.forEach(arg => {
+        if (arg.type == "SpreadElement") {
+            flushPending();
+            parts.push(arg.argument);
+        } else {
+            pending.push(arg);
+        }
+    });
+    flushPending();
+
+    return buildArrayConcat(parts);
+}
+
 function isLoopOrSwitch(node) {
     return node.type == "WhileStatement"
         || node.type == "DoWhileStatement"
@@ -135,6 +186,8 @@ module.exports = class Normalizer {
                     return this.simplifySwitchStatement(node);*/
                 case "TryStatement":
                     return this.simplifyTryStatement(node);
+                case "CallExpression":
+                    return this.simplifyCallExpression(node);
                 default:
                     return node;
             }
@@ -517,6 +570,43 @@ module.exports = class Normalizer {
         } else {
             return node;
         }
+    }
+
+    /**
+     * Lower simple spread calls like target.push(...items) to
+     * target.push.apply(target, items). This keeps append-style calls stable
+     * even when Babel is disabled.
+     * @param {CallExpression} node
+     * @return {Node}
+     */
+    simplifyCallExpression (node) {
+        assert.ok(estest.isNode(node));
+
+        if (!hasSpreadElement(node.arguments)) {
+            return node;
+        }
+
+        var thisArg = { type: "Literal", value: null };
+        if (node.callee.type == "MemberExpression") {
+            if (!isSimpleThisReceiver(node.callee.object)) {
+                return node;
+            }
+            thisArg = utils.cloneISwearIKnowWhatImDoing(node.callee.object);
+        }
+
+        return {
+            type: "CallExpression",
+            callee: {
+                type: "MemberExpression",
+                object: node.callee,
+                property: { type: "Identifier", name: "apply" },
+                computed: false
+            },
+            arguments: [
+                thisArg,
+                spreadArgumentsToArray(node.arguments)
+            ]
+        };
     }
 
 };

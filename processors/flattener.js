@@ -201,56 +201,69 @@ module.exports = class Flattener {
      * Get output switch construct program
      * @param {number} entry Entry point
      * @param {number} exit Exit point
+     * @param {Object} options Program options
      * @returns {Program} Switch construct program
      */
-    getProgram (entry, exit) {
+    getProgram (entry, exit, options) {
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
+
+        options = options || {};
+        var name = options.name || "main";
+        var invoke = options.invoke !== false;
         
+        var body = [
+            {
+                type: "FunctionDeclaration",
+                id: { type: "Identifier", name: name },
+                params: [
+                    { type: "Identifier", name: "state" },
+                    { type: "Identifier", name: "scope" }
+                ],
+                body: {
+                    type: "BlockStatement",
+                    body: [
+                        {
+                            type: "VariableDeclaration",
+                            kind: "var",
+                            declarations: [
+                                {
+                                    type: "VariableDeclarator",
+                                    id: { type: "Identifier", name: "veilmark$tobethrown" },
+                                    init: null
+                                }
+                            ]
+                        },
+                        {
+                            type: "WhileStatement",
+                            test: { type: "Literal", value: true },
+                            body: this.getCases(entry, exit)
+                        }
+                    ]
+                },
+                generator: options.generator === true,
+                expression: false,
+                async: options.async === true
+            }
+        ];
+
+        if (invoke) {
+            body.push({
+                type: "ExpressionStatement",
+                expression: {
+                    type: "CallExpression",
+                    callee: { type: "Identifier", name: name },
+                    arguments: [
+                        { type: "Literal", value: entry },
+                        { type: "ObjectExpression", properties: [] }
+                    ]
+                }
+            });
+        }
+
         return {
             type: "Program",
-            body: [
-                {
-                    type: "FunctionDeclaration",
-                    id: { type: "Identifier", name: "main" },
-                    params: [
-                        { type: "Identifier", name: "state" },
-                        { type: "Identifier", name: "scope" }
-                    ],
-                    body: {
-                        type: "BlockStatement",
-                        body: [
-                            {
-                                type: "VariableDeclaration",
-                                kind: "var",
-                                declarations: [
-                                    {
-                                        type: "VariableDeclarator",
-                                        id: { type: "Identifier", name: "veilmark$tobethrown" },
-                                        init: null
-                                    }
-                                ]
-                            },
-                            {
-                                type: "WhileStatement",
-                                test: { type: "Literal", value: true },
-                                body: this.getCases(entry, exit)
-                            }
-                        ]
-                    }
-                },
-                {
-                    type: "ExpressionStatement",
-                    expression: {
-                        type: "CallExpression",
-                        callee: { type: "Identifier", name: "main" },
-                        arguments: [
-                            { type: "Literal", value: entry },
-                            { type: "ObjectExpression", properties: [] }
-                        ]
-                    }
-                }
-            ]
+            body: body
         };
     }
     

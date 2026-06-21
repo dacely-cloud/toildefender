@@ -83,10 +83,6 @@ function createMethodStub(id) {
 function anonymousMethodName(node) {
     assert.equal(node.type, "FunctionExpression");
 
-    if (node.id) {
-        return node.id.name;
-    }
-
     if (!node[ANON_METHOD_ID]) {
         Object.defineProperty(node, ANON_METHOD_ID, {
             configurable: false,
@@ -96,6 +92,70 @@ function anonymousMethodName(node) {
     }
 
     return node[ANON_METHOD_ID];
+}
+
+function functionDeclarationName(node) {
+    assert.equal(node.type, "FunctionDeclaration");
+
+    if (!node.id || !node.id.name) {
+        if (!node[ANON_METHOD_ID]) {
+            Object.defineProperty(node, ANON_METHOD_ID, {
+                configurable: false,
+                enumerable: false,
+                value: `veilmark$anon$${utils.hash(node)}`
+            });
+        }
+        node.id = { type: "Identifier", name: node[ANON_METHOD_ID] };
+    }
+
+    return node.id.name;
+}
+
+function isReferenceIdentifier(node, stack) {
+    var parentFrame = stack[1];
+    if (!parentFrame) {
+        return true;
+    }
+
+    var parent = parentFrame.node;
+    var key = parentFrame.key;
+
+    if ((parent.type == "FunctionDeclaration" || parent.type == "FunctionExpression") && (key == "id" || key == "params")) {
+        return false;
+    }
+    if (parent.type == "VariableDeclarator" && key == "id") {
+        return false;
+    }
+    if (parent.type == "CatchClause" && key == "param") {
+        return false;
+    }
+    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) {
+        return false;
+    }
+    if (parent.type == "Property" && key == "key" && parent.computed === false) {
+        return false;
+    }
+    if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") {
+        return false;
+    }
+
+    return true;
+}
+
+function renameFunctionExpressionSelfReferences(node, name) {
+    assert.equal(node.type, "FunctionExpression");
+
+    if (!node.id || !node.id.name || node.id.name == name) {
+        return;
+    }
+
+    var oldName = node.id.name;
+    traverser.traverse(node.body, [], (child, stack) => {
+        if (child.type == "Identifier" && child.name == oldName && isReferenceIdentifier(child, stack)) {
+            child.name = name;
+        }
+        return child;
+    });
 }
 
 /**
@@ -133,8 +193,7 @@ module.exports = class Methods {
         assert.ok(estest.isNode(ast));
         
         var code = esprima.parse(METHODS_INJECT);
-        code.type = "BlockStatement";
-        ast.body.splice(0, 0, code);
+        ast.body.splice.apply(ast.body, [0, 0].concat(code.body));
     }
     
     /**
@@ -204,7 +263,7 @@ module.exports = class Methods {
         
         traverser.traverse(ast, [], (node, stack) => {
             if (node.type == "FunctionDeclaration") { // Statement
-                methods.push(node.id.name);
+                methods.push(functionDeclarationName(node));
             } else if (node.type == "FunctionExpression") { // Expression
                 methods.push(anonymousMethodName(node));
             }
@@ -227,10 +286,12 @@ module.exports = class Methods {
         
         traverser.traverse(ast, [], (node, stack) => {
             if (node.type == "FunctionDeclaration") { // Statement
+                functionDeclarationName(node);
                 methods.push(node);
                 return { type: "ExpressionStatement", expression: createMethodStub(node.id) }; // This is not ideal
             } else if (node.type == "FunctionExpression") { // Expression
                 var id = anonymousMethodName(node);
+                renameFunctionExpressionSelfReferences(node, id);
                 // Merge into old object instead of creating a new one to preserve object references
                 methods.push(_.assign(node, {
                     type: "FunctionDeclaration",
@@ -297,11 +358,12 @@ module.exports = class Methods {
         
         traverser.traverse(ast, [], (node, stack) => {
             if (node.type == "Identifier" && methodEntryExitPoints[node.name] && methodEntryExitPoints[node.name].entry) {
+                var dispatcher = methodEntryExitPoints[node.name].dispatcher || "main";
                 return {
                     type: "CallExpression",
                     callee: { type: "Identifier", name: "veilmark$bind" },
                     arguments: [
-                        { type: "Identifier", name: "main" },
+                        { type: "Identifier", name: dispatcher },
                         { type: "Identifier", name: methodEntryExitPoints[node.name].entry }
                     ]
                 };

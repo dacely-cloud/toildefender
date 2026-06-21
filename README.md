@@ -407,11 +407,18 @@ Main options:
 | `code` | Entry source code. |
 | `modulesCode` | Map of dependency filename to source code. |
 | `features` | Feature switches for the classic pipeline. |
+| `babelPreserveAsync` | Defaults to `true`; keeps async/generator syntax native so async-aware flattening can avoid Babel regenerator helper bloat. Set to `false` for legacy async lowering. |
 | `protections.virtualMachine` | User-facing VM bytecode backend configuration. |
 | `protections.hashMesh` | User-facing hash-mesh unlock configuration. |
 | `numericVm` | Lower-level numeric VM configuration retained for internal callers. |
 | `preprocessorVariables` | Compile-time preprocessor constants. |
 | `logLevel` | `error`, `warn`, `info`, `debug`, or `log`. |
+
+When `babelPreserveAsync` is enabled, Babel still normalizes syntax such as
+classes, arrows, destructuring, and spread for the older AST passes, but leaves
+async and generator functions for ToilDefender's async/generator dispatchers.
+This avoids the large regenerator helper path for modern browser and Node
+bundles.
 
 ## Toil Integration
 

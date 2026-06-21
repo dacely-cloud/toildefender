@@ -125,7 +125,10 @@ module.exports = class Variables {
                                         init: {
                                             type: "FunctionExpression",
                                             params: def.node.params,
-                                            body: def.node.body
+                                            body: def.node.body,
+                                            generator: def.node.generator === true,
+                                            expression: def.node.expression === true,
+                                            async: def.node.async === true
                                         }
                                     }
                                 ]

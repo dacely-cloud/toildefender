@@ -41,6 +41,7 @@ var prHealth            = require("./processors/health");
 var defaultOptions = {
     babel: true,
     babelTarget: "ie 11",
+    babelPreserveAsync: true,
     features: {
         dead_code: true,
         scope: true,
@@ -164,6 +165,7 @@ exports.features = _.fromPairs(
  * @param {string} options.code - Code of entry point file to be obfuscated.
  * @param {Object.<string, string>} options.modulesCode - Code of all of options.code's depedencies.
  * @param {boolean} [options.babel = true] - Whether to run babel with ES2015 preset before obfuscating.
+ * @param {boolean} [options.babelPreserveAsync = true] - Whether Babel should leave async/generator syntax for async-aware flattening instead of emitting regenerator helpers.
  * @param {Object.<string, boolean>} [options.features = All enabled] - Feature configuration.
  * @param {logAdapterCallback} [options.logAdapter = Console] - Logging adapter.
  * @param {string} [options.logLevel = "warn"] - Minimum level of shown log messages.
@@ -249,6 +251,17 @@ exports.do = function (options) {
 
     function transformModernSyntax(code, label) {
         if (modernBabel) {
+            var presetOptions = {
+                modules: "commonjs",
+                targets: options.babelTarget,
+                useBuiltIns: false
+            };
+            if (options.babelPreserveAsync !== false) {
+                presetOptions.exclude = [
+                    "@babel/plugin-transform-async-to-generator",
+                    "@babel/plugin-transform-regenerator"
+                ];
+            }
             var result = modernBabel.transformSync(code, {
                 babelrc: false,
                 comments: false,
@@ -258,11 +271,7 @@ exports.do = function (options) {
                 presets: [
                     [
                         require.resolve("@babel/preset-env"),
-                        {
-                            modules: "commonjs",
-                            targets: options.babelTarget,
-                            useBuiltIns: false
-                        }
+                        presetOptions
                     ]
                 ]
             });
@@ -293,6 +302,19 @@ exports.do = function (options) {
             ].map(require.resolve)
         };
         return legacyBabel.transform(code, babelOptions).code;
+    }
+
+    function dispatcherForMethod(method) {
+        if (method.async === true && method.generator === true) {
+            return "main$asyncGenerator";
+        }
+        if (method.async === true) {
+            return "main$async";
+        }
+        if (method.generator === true) {
+            return "main$generator";
+        }
+        return "main";
     }
     
     options = _.merge({}, defaultOptions, options); // first argument gets mutated
@@ -328,6 +350,7 @@ exports.do = function (options) {
     };
     
     var logger = new Logger(options.logAdapter);
+    var customBindAdded = false;
 
     var start = Date.now();
 
@@ -349,6 +372,14 @@ exports.do = function (options) {
     
     // Parse code
     var ast, modulesAST;
+    function addCustomBindOnce() {
+        if (!customBindAdded) {
+            var methods = new prMethods(logger);
+            methods.addCustomBind(ast);
+            customBindAdded = true;
+        }
+    }
+
     doTask("parse", true, () => {
         modulesAST = _.mapValues(options.modulesCode, (code, key) => tryTag(key, () => esprima.parse(code, parseOptions)));
         modulesAST.app = tryTag("app", () => esprima.parse(options.code, parseOptions));
@@ -438,6 +469,11 @@ exports.do = function (options) {
                 methods.removeFirstArguments(method, refers ? method.params.filter(x => x.name.indexOf("$$scope") == 0).length : 0);
                 return methods.replaceArgumentReferences(method, true);
             });
+            fns.forEach(method => {
+                if (method && method.id && methodEntryPoints[method.id.name]) {
+                    methodEntryPoints[method.id.name].dispatcher = dispatcherForMethod(method);
+                }
+            });
             if (options.features.control_flow) {
                 methods.replaceFunctionCalls(ast, methodEntryPoints);
                 fns.forEach(method => {
@@ -446,25 +482,88 @@ exports.do = function (options) {
             }
         });
         
-        doTask("add_custom_bind", true, () => {
-            methods.addCustomBind(ast);
-        });
-    
         doTask("control_flow", options.features.control_flow, () => {
             // Apply control flow flattening and merge methods
             var flattener = new prFlattener(logger, rng);
             var entry = rng.get(), exit = rng.get();
-            flattener.addMethod(ast, entry, exit);
+            var dispatcherGroups = {
+                "main$async": {
+                    async: true,
+                    fns: []
+                },
+                "main$generator": {
+                    generator: true,
+                    fns: []
+                },
+                "main$asyncGenerator": {
+                    async: true,
+                    generator: true,
+                    fns: []
+                }
+            };
+            var syncFns = [];
+
             fns.forEach(method => {
+                var dispatcher = dispatcherForMethod(method);
+                if (dispatcher == "main") {
+                    syncFns.push(method);
+                } else {
+                    dispatcherGroups[dispatcher].fns.push(method);
+                }
+            });
+
+            flattener.addMethod(ast, entry, exit);
+            syncFns.forEach(method => {
                 methods.bumpArgumentsIndices(method, 1);
 
                 var entry = methodEntryPoints[method.id.name].entry;
                 flattener.addMethod(method.body, entry, exit);
             });
             
-            ast = flattener.getProgram(entry, exit);
-            
-            ast = flattener.unifyPrefixStatements(ast);
+            var syncAst = flattener.getProgram(entry, exit, {
+                name: "main",
+                invoke: true
+            });
+
+            syncAst = flattener.unifyPrefixStatements(syncAst);
+
+            var asyncPrograms = [];
+            Object.keys(dispatcherGroups).forEach(name => {
+                var group = dispatcherGroups[name];
+                if (group.fns.length == 0) {
+                    return;
+                }
+
+                var groupFlattener = new prFlattener(logger, rng);
+                var groupEntry = methodEntryPoints[group.fns[0].id.name].entry;
+                var groupExit = rng.get();
+
+                group.fns.forEach(method => {
+                    methods.bumpArgumentsIndices(method, 1);
+
+                    var entry = methodEntryPoints[method.id.name].entry;
+                    groupFlattener.addMethod(method.body, entry, groupExit);
+                });
+
+                var groupAst = groupFlattener.getProgram(groupEntry, groupExit, {
+                    name: name,
+                    async: group.async === true,
+                    generator: group.generator === true,
+                    invoke: false
+                });
+
+                groupAst = groupFlattener.unifyPrefixStatements(groupAst);
+                asyncPrograms.push(groupAst);
+            });
+
+            if (asyncPrograms.length > 0) {
+                ast = {
+                    type: "Program",
+                    body: Array.prototype.concat.apply([], asyncPrograms.map(program => program.body)).concat(syncAst.body)
+                };
+            } else {
+                ast = syncAst;
+            }
         })
         .otherwise(() => {
             if (ast.type == "Program") {
@@ -475,6 +574,10 @@ exports.do = function (options) {
                 body: fns.concat([ ast ])
             };
         });
+    });
+
+    doTask("add_runtime_helpers", options.features.scope || options.features.object_packing || options.features.literals, () => {
+        addCustomBindOnce();
     });
     
     // Postprocessing
