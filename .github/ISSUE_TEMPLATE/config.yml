@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/dacely-cloud/toildefender/security/advisories/new
+    about: Report a security vulnerability privately. DO NOT create a public issue for security vulnerabilities.
+  - name: Toil Website
+    url: https://toil.org/
+    about: Visit the Toil homepage for documentation and support.

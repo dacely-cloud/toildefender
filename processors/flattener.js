@@ -173,7 +173,7 @@ module.exports = class Flattener {
                             expression: {
                                 type: "AssignmentExpression",
                                 operator: "=",
-                                left: { type: "Identifier", name: "$$defendjs$tobethrown" },
+                                left: { type: "Identifier", name: "veilmark$tobethrown" },
                                 right: { type: "Literal", value: null }
                             }
                         },
@@ -718,7 +718,7 @@ module.exports = class Flattener {
                             expression: {
                                 type: "AssignmentExpression",
                                 operator: "=",
-                                left: node.handler.$$defendjs$exception,
+                                left: node.handler.veilmark$exception,
                                 right: { type: "Identifier", name: "e" }
                             }
                         },
@@ -756,11 +756,11 @@ module.exports = class Flattener {
         var maximumScopeIndex = 0;
         
         ast = traverser.traverse(ast, [], (node, stack) => {
-            if (node.$$defendjs$reassigningArguments && !node.$$defendjs$followsSlicingArguments) {
+            if (node.veilmark$reassigningArguments && !node.veilmark$followsSlicingArguments) {
                 node = { type: "EmptyStatement" };
-            } else if (node.$$defendjs$scopeObject) {
+            } else if (node.veilmark$scopeObject) {
                 node = { type: "EmptyStatement" };
-            } else if (node.$$defendjs$scopeObjectReference) {
+            } else if (node.veilmark$scopeObjectReference) {
                 maximumScopeIndex = Math.max(maximumScopeIndex, node.property.value);
             } else if (node.type == "Identifier" && _.startsWith(node.name, "$$scope")) {
                 node.name = "$$unifiedScope";
@@ -795,7 +795,7 @@ module.exports = class Flattener {
                 declarations: [
                     {
                         type: "VariableDeclarator",
-                        id: { type: "Identifier", name: "$$defendjs$arguments" },
+                        id: { type: "Identifier", name: "veilmark$arguments" },
                         init: { type: "Identifier", name: "arguments" }
                     }
                 ]

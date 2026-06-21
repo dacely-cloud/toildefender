@@ -100,7 +100,7 @@ module.exports = class Modules {
             scope.references
             .filter(reference => !utils.isResolvedReference(reference))
             .forEach(reference => {
-                var parent = reference.identifier.$$defendjs$parent;
+                var parent = reference.identifier.veilmark$parent;
                 
                 if (reference.identifier.name == "exports") {
                     this.esutils.replaceNode(ast, reference.identifier, utils.cloneISwearIKnowWhatImDoing(replacement));
@@ -210,7 +210,7 @@ module.exports = class Modules {
                                 
                             ]
                         },
-                        $$defendjs$module: path
+                        veilmark$module: path
                     });
                 }
                 

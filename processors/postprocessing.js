@@ -10,9 +10,9 @@ var utils = require("../utils");
 
 /**
  * Merges nested bind calls like
- * $$defendjs$bind($$defendjs$bind(main, 1234), 5678)
+ * veilmark$bind(veilmark$bind(main, 1234), 5678)
  * to
- * $$defendjs$bind(main, 1234, 5678)
+ * veilmark$bind(main, 1234, 5678)
  * @param {Node} node
  * @returns {Node}
  */
@@ -27,7 +27,7 @@ function mergeNestedBinds(node) {
 }
 
 /**
- * Checks whether node is a call to $$defendjs$bind.
+ * Checks whether node is a call to veilmark$bind.
  * @param {Node} node
  * @returns {boolean}
  */
@@ -36,7 +36,7 @@ function isBindCall(node) {
     
     return node.type == "CallExpression"
         && node.callee.type == "Identifier"
-        && node.callee.name == "$$defendjs$bind";
+        && node.callee.name == "veilmark$bind";
 }
 
 module.exports = class Postprocessing {
@@ -57,9 +57,9 @@ module.exports = class Postprocessing {
             if (isBindCall(node)) {
                 node.arguments = mergeNestedBinds(node);
             } else if (node.type == "BlockStatement" || node.type == "Program") {
-                node.body = node.body.filter(x => x.type != "EmptyStatement");
+                node.body = node.body.filter(x => estest.isNode(x) && x.type != "EmptyStatement");
             } else if (node.type == "SwitchCase") {
-                node.consequent = node.consequent.filter(x => x.type != "EmptyStatement");
+                node.consequent = node.consequent.filter(x => estest.isNode(x) && x.type != "EmptyStatement");
             }
             
             return node;

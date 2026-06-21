@@ -21,7 +21,7 @@ const COMPOUND_STATEMENTS = [
 ];
 
 exports.isNode = function (x) {
-    return x.type != null;
+    return x != null && typeof x.type == "string";
 };
 
 exports.isStatement = function (x) {

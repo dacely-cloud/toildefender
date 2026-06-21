@@ -1,4 +1,4 @@
-/** @module defendjs */
+/** @module toildefender */
 
 "use strict";
 
@@ -6,7 +6,14 @@ var fs = require("fs");
 var assert = require("assert");
 
 var _ = require("lodash");
-var babel = require("babel-core");
+var legacyBabel = require("babel-core");
+var modernBabel = (() => {
+    try {
+        return require("@babel/core");
+    } catch (e) {
+        return null;
+    }
+})();
 var escodegen = require("escodegen");
 var escope = require("escope");
 var esprima = require("esprima");
@@ -28,20 +35,64 @@ var prPostprocessing    = require("./processors/postprocessing");
 var prUglifier          = require("./processors/uglifier");
 var prIdentifiers       = require("./processors/identifiers");
 var prLiterals          = require("./processors/literals");
+var prNumericVm         = require("./processors/numericVm");
 var prHealth            = require("./processors/health");
 
 var defaultOptions = {
     babel: true,
+    babelTarget: "ie 11",
     features: {
         dead_code: true,
         scope: true,
         control_flow: true,
         identifiers: true,
+        numeric_vm: false,
+        object_packing: true,
         literals: true,
         mangle: true,
         compress: true
     },
     logLevel: "warn",
+    numericVm: {
+        enabled: false,
+        maxFunctionSize: 120,
+        minFunctionSize: 1,
+        mode: "balanced",
+        perFunctionDialect: true,
+        seed: "toildefender-numeric-vm",
+        hashMesh: {
+            bindToVmState: true,
+            chaffRatio: 0.55,
+            deriveDialectFromMesh: false,
+            enabled: false,
+            encodeChaff: true,
+            mode: "balanced",
+            serverBound: false,
+            unlock: "per-function"
+        },
+        virtualize: "marked"
+    },
+    protections: {
+        virtualMachine: {
+            bigintBytecode: true,
+            enabled: false,
+            encodeConstants: true,
+            mode: "balanced",
+            perFunctionDialect: true,
+            randomizedOpcodes: true,
+            virtualize: "marked"
+        },
+        hashMesh: {
+            bindToVmState: true,
+            chaffRatio: 0.55,
+            deriveDialectFromMesh: false,
+            enabled: false,
+            encodeChaff: true,
+            mode: "balanced",
+            serverBound: false,
+            unlock: "per-function"
+        }
+    },
     preprocessorVariables: {}
 };
 
@@ -50,6 +101,8 @@ var featureDeps = {
     scope: [ "mangle" ],
     control_flow: [ "scope", "mangle" ],
     identifiers: [ "mangle" ],
+    numeric_vm: [],
+    object_packing: [ "identifiers" ],
     literals: [ "scope", "mangle" ],
     compress: [ "mangle" ]
 };
@@ -66,6 +119,12 @@ var featureDescs = {
     },
     identifiers: {
         en: "Obfuscate identifiers (variable, object and property names)"
+    },
+    numeric_vm: {
+        en: "Virtualize selected functions into BigInt-packed numeric VM programs"
+    },
+    object_packing: {
+        en: "Pack object literal keys into numeric schemas instead of alternating key/value arrays"
     },
     literals: {
         en: "Obfuscate literals (numbers, strings)"
@@ -110,7 +169,7 @@ exports.features = _.fromPairs(
  * @param {string} [options.logLevel = "warn"] - Minimum level of shown log messages.
  * @param {Object.<string, boolean>} [options.preprocessorVariables] - Preprocessor variables.
  * @example
- * defendjs.do({
+ * toildefender.do({
  *     code: "...",
  *     modulesCode: {
  *         depA: "...",
@@ -187,8 +246,69 @@ exports.do = function (options) {
             }
         });
     }
+
+    function transformModernSyntax(code, label) {
+        if (modernBabel) {
+            var result = modernBabel.transformSync(code, {
+                babelrc: false,
+                comments: false,
+                compact: false,
+                configFile: false,
+                sourceType: "unambiguous",
+                presets: [
+                    [
+                        require.resolve("@babel/preset-env"),
+                        {
+                            modules: "commonjs",
+                            targets: options.babelTarget,
+                            useBuiltIns: false
+                        }
+                    ]
+                ]
+            });
+            return result && result.code || code;
+        }
+
+        var babelOptions = {
+            "plugins": [
+                "babel-plugin-transform-es2015-arrow-functions",
+                //"babel-plugin-transform-es2015-block-scoped-functions",
+                "babel-plugin-transform-es2015-block-scoping",
+                "babel-plugin-transform-es2015-classes",
+                "babel-plugin-transform-es2015-computed-properties",
+                //"babel-plugin-check-es2015-constants",
+                "babel-plugin-transform-es2015-destructuring",
+                "babel-plugin-transform-es2015-duplicate-keys",
+                "babel-plugin-transform-es2015-for-of",
+                "babel-plugin-transform-es2015-function-name",
+                "babel-plugin-transform-es2015-literals",
+                "babel-plugin-transform-es2015-object-super",
+                "babel-plugin-transform-es2015-parameters",
+                "babel-plugin-transform-es2015-shorthand-properties",
+                "babel-plugin-transform-es2015-spread",
+                "babel-plugin-transform-es2015-sticky-regex",
+                "babel-plugin-transform-es2015-template-literals",
+                //"babel-plugin-transform-es2015-typeof-symbol",
+                "babel-plugin-transform-es2015-unicode-regex"
+            ].map(require.resolve)
+        };
+        return legacyBabel.transform(code, babelOptions).code;
+    }
     
     options = _.merge({}, defaultOptions, options); // first argument gets mutated
+    if (options.protections.virtualMachine.enabled) {
+        options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
+            enabled: true
+        });
+        options.features.numeric_vm = true;
+    }
+    if (options.protections.hashMesh.enabled) {
+        options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
+            enabled: true,
+            hashMesh: options.protections.hashMesh
+        });
+        options.features.numeric_vm = true;
+    }
     if (!options.logAdapter) {
         options.logAdapter = createConsoleLoggingAdapter(options.logLevel);
     }
@@ -223,31 +343,8 @@ exports.do = function (options) {
     
     // Apply babel
     doTask("babel", options.babel, () => {
-        var babelOptions = {
-            "plugins": [
-                "babel-plugin-transform-es2015-arrow-functions",
-                //"babel-plugin-transform-es2015-block-scoped-functions",
-                "babel-plugin-transform-es2015-block-scoping",
-                "babel-plugin-transform-es2015-classes",
-                "babel-plugin-transform-es2015-computed-properties",
-                //"babel-plugin-check-es2015-constants",
-                "babel-plugin-transform-es2015-destructuring",
-                "babel-plugin-transform-es2015-duplicate-keys",
-                "babel-plugin-transform-es2015-for-of",
-                "babel-plugin-transform-es2015-function-name",
-                "babel-plugin-transform-es2015-literals",
-                "babel-plugin-transform-es2015-object-super",
-                "babel-plugin-transform-es2015-parameters",
-                "babel-plugin-transform-es2015-shorthand-properties",
-                "babel-plugin-transform-es2015-spread",
-                "babel-plugin-transform-es2015-sticky-regex",
-                "babel-plugin-transform-es2015-template-literals",
-                //"babel-plugin-transform-es2015-typeof-symbol",
-                "babel-plugin-transform-es2015-unicode-regex"
-            ].map(require.resolve)
-        };
-        options.modulesCode = _.mapValues(options.modulesCode, (moduleCode, key) => tryTag(key, () => babel.transform(moduleCode, babelOptions).code));
-        options.code = tryTag("app", () => babel.transform(options.code, babelOptions).code);
+        options.modulesCode = _.mapValues(options.modulesCode, (moduleCode, key) => tryTag(key, () => transformModernSyntax(moduleCode, key)));
+        options.code = tryTag("app", () => transformModernSyntax(options.code, "app"));
     });
     
     // Parse code
@@ -274,13 +371,22 @@ exports.do = function (options) {
         var normalizer = new prNormalizer(logger);
         ast = normalizer.simplify(ast);
     });
+
+    doTask("numeric_vm", options.features.numeric_vm || options.numericVm.enabled, () => {
+        var numericVm = new prNumericVm(logger, _.merge({}, options.numericVm, {
+            enabled: options.features.numeric_vm || options.numericVm.enabled
+        }));
+        ast = numericVm.apply(ast);
+    });
         
     // Move identifiers
     doTask("identifiers", options.features.identifiers, () => {
         var identifiers = new prIdentifiers(logger);
         
         ast = identifiers.computeProperties(ast);
-        ast = identifiers.arrayizeObjects(ast);
+        ast = identifiers.arrayizeObjects(ast, {
+            objectPacking: options.features.object_packing !== false
+        });
         //ast = identifiers.moveIdentifiers(ast, escope.analyze(ast, scopeOptions));
         //^ why is this commented out?
         ast = identifiers.moveLiterals(ast, escope.analyze(ast, scopeOptions));
@@ -426,4 +532,3 @@ exports.do = function (options) {
         map: result.map && result.map.toString()
     };
 };
-

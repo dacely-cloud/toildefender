@@ -412,7 +412,7 @@ module.exports = class Normalizer {
                 });
             } else {
                 var finalizer = node.finalizer;
-                traverser.traverseEx(node.block, [], (node, stack) => {
+                traverser.traverseEx(node.block, [], function (node, stack) {
                     if (stack.some(x => estest.isFunction(x.node))) {
                         this.abort();
                         return node;
@@ -426,7 +426,7 @@ module.exports = class Normalizer {
                                     declarations: [
                                         {
                                             type: "VariableDeclarator",
-                                            id: { type: "Identifier", name: "$$defendjs$return" },
+                                            id: { type: "Identifier", name: "veilmark$return" },
                                             init: node.argument
                                         }
                                     ]
@@ -434,7 +434,7 @@ module.exports = class Normalizer {
                                 utils.cloneISwearIKnowWhatImDoing(finalizer),
                                 {
                                     type: "ReturnStatement",
-                                    argument: { type: "Identifier", name: "$$defendjs$return" }
+                                    argument: { type: "Identifier", name: "veilmark$return" }
                                 }
                             ]
                         };
@@ -451,7 +451,7 @@ module.exports = class Normalizer {
                             block: node.block,
                             handler: {
                                 type: "CatchClause",
-                                param: { type: "Identifier", name: "$$defendjs$e" },
+                                param: { type: "Identifier", name: "veilmark$e" },
                                 body: {
                                     type: "BlockStatement",
                                     body: [
@@ -461,8 +461,8 @@ module.exports = class Normalizer {
                                             declarations: [
                                                 {
                                                     type: "VariableDeclarator",
-                                                    id: { type: "Identifier", name: "$$defendjs$_e" },
-                                                    init: { type: "Identifier", name: "$$defendjs$e" }
+                                                    id: { type: "Identifier", name: "veilmark$_e" },
+                                                    init: { type: "Identifier", name: "veilmark$e" }
                                                 }
                                             ]
                                         }
@@ -473,10 +473,10 @@ module.exports = class Normalizer {
                         node.finalizer,
                         {
                             type: "IfStatement",
-                            test: { type: "Identifier", name: "$$defendjs$_e" },
+                            test: { type: "Identifier", name: "veilmark$_e" },
                             consequent: {
                                 type: "ThrowStatement",
-                                argument: { type: "Identifier", name: "$$defendjs$_e" }
+                                argument: { type: "Identifier", name: "veilmark$_e" }
                             }
                         }
                     ]

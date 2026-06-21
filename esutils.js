@@ -11,7 +11,7 @@ module.exports = function (logger) {
         assert.ok(estest.isNode(node));
         
         traverser.visitChildrenEx(node, (child, key) => {
-            Object.defineProperty(child, "$$defendjs$parent", {
+            Object.defineProperty(child, "veilmark$parent", {
                 value: node,
                 configurable: true
             });
@@ -23,7 +23,7 @@ module.exports = function (logger) {
         assert.ok(estest.isNode(node));
         
         traverser.visitChildrenEx(node, (child, key) => {
-            Object.defineProperty(child, "$$defendjs$parent", {
+            Object.defineProperty(child, "veilmark$parent", {
                 value: node,
                 configurable: true
             });
@@ -40,14 +40,14 @@ module.exports = function (logger) {
         if (scope.block.body.type == "Program" || scope.block.body.type == "BlockStatement") {
             scope.block.body.body.splice(idx, 0, node);
             
-            Object.defineProperty(node, "$$defendjs$parent", {
+            Object.defineProperty(node, "veilmark$parent", {
                 value: scope.block.body,
                 configurable: true
             });
         } else if (scope.block.type == "Program" || scope.block.type == "BlockStatement") {
             scope.block.body.splice(idx, 0, node);
             
-            Object.defineProperty(node, "$$defendjs$parent", {
+            Object.defineProperty(node, "veilmark$parent", {
                 value: scope.block,
                 configurable: true
             });
@@ -68,8 +68,8 @@ module.exports = function (logger) {
         traverser.traverseEx(root, [], function (node, stack) {
             if (node == child) {
                 this.abort();
-                Object.defineProperty(replacement, "$$defendjs$parent", {
-                    value: child.$$defendjs$parent,
+                Object.defineProperty(replacement, "veilmark$parent", {
+                    value: child.veilmark$parent,
                     configurable: true
                 });
                 _this.setParents(replacement);
@@ -83,7 +83,7 @@ module.exports = function (logger) {
     this.getParent = function (node) {
         assert.ok(estest.isNode(node));
         
-        var parent = node.$$defendjs$parent;
+        var parent = node.veilmark$parent;
         var legit = false;
         if (parent) {
             traverser.visitChildren(parent, child => {

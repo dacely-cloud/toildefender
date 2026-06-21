@@ -9,6 +9,26 @@ var ESUtils = require("../esutils");
 var traverser = require("../traverser");
 var utils = require("../utils");
 
+function literal(value) {
+    return { type: "Literal", value: value };
+}
+
+function encodeObjectKey(key, salt, index) {
+    var encoded = [ key.length ^ ((salt + index * 131) & 65535) ];
+    for (var i = 0; i < key.length; i += 1) {
+        encoded.push(key.charCodeAt(i) ^ ((salt + index * 257 + i * 17) & 65535));
+    }
+    return encoded;
+}
+
+function objectKey(prop) {
+    return prop.key.name || prop.key.value;
+}
+
+function isBigIntLiteral(node) {
+    return node.type == "Literal" && typeof node.value == "bigint";
+}
+
 module.exports = class Identifiers {
 
     constructor (logger) {
@@ -55,27 +75,55 @@ module.exports = class Identifiers {
     }
     
     /**
-     * Replace objects with an array via $$defendjs$toObject.
+     * Replace objects with an array via veilmark$toObject.
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    arrayizeObjects (ast) {
+    arrayizeObjects (ast, options) {
         assert.ok(estest.isNode(ast));
+        options = options || {};
 
         ast = traverser.traverse(ast, [], (node, stack) => {
             if (node.type == "ObjectExpression") {
-                var arr = [];
+                if (options.objectPacking === false) {
+                    var arr = [];
+                    node.properties.forEach(prop => {
+                        arr.push(literal(objectKey(prop)));
+                        arr.push(prop.value);
+                    });
+                    return {
+                        type: "CallExpression",
+                        callee: { type: "Identifier", name: "veilmark$toObject"  },
+                        arguments: [
+                            {
+                                type: "ArrayExpression",
+                                elements: arr
+                            }
+                        ]
+                    };
+                }
+
+                var salt = utils.random(1, 65535);
+                var schema = [ salt, node.properties.length ];
+                var values = [];
+
                 node.properties.forEach(prop => {
-                    arr.push({ type: "Literal", value: prop.key.name || prop.key.value });
-                    arr.push(prop.value);
+                    var key = objectKey(prop);
+                    encodeObjectKey(String(key), salt, values.length).forEach(value => schema.push(value));
+                    values.push(prop.value);
                 });
+
                 return {
                     type: "CallExpression",
-                    callee: { type: "Identifier", name: "$$defendjs$toObject"  },
+                    callee: { type: "Identifier", name: "veilmark$toObject"  },
                     arguments: [
                         {
                             type: "ArrayExpression",
-                            elements: arr
+                            elements: schema.map(literal)
+                        },
+                        {
+                            type: "ArrayExpression",
+                            elements: values
                         }
                     ]
                 };
@@ -156,7 +204,7 @@ module.exports = class Identifiers {
     }
     
     /**
-     * Move all literals into the $$defendjs$literals array.
+     * Move all literals into the veilmark$literals array.
      * @param {Node} ast Root node
      * @param {ScopeManager} scopeManager Scope manager
      * @returns {Node} Root node
@@ -169,7 +217,7 @@ module.exports = class Identifiers {
         var vars = [];
         
         ast = traverser.traverse(ast, [], (node, stack) => {
-            if (node.type == "Literal" && stack.length > 0 && stack[1].node.type != "Property") {
+            if (node.type == "Literal" && !isBigIntLiteral(node) && stack.length > 0 && stack[1].node.type != "Property") {
                 var idx = vars.indexOf(node.value);
                 if (idx == -1) {
                     idx = vars.length;
@@ -178,7 +226,7 @@ module.exports = class Identifiers {
                 
                 return {
                     type: "MemberExpression",
-                    object: { type: "Identifier", name: "$$defendjs$literals" },
+                    object: { type: "Identifier", name: "veilmark$literals" },
                     property: { type: "Literal", value: idx },
                     computed: true
                 };
@@ -193,7 +241,7 @@ module.exports = class Identifiers {
             declarations: [
                 {
                     type: "VariableDeclarator",
-                    id: { type: "Identifier", name: "$$defendjs$literals" },
+                    id: { type: "Identifier", name: "veilmark$literals" },
                     init: {
                         type: "ArrayExpression",
                         elements: vars.map(x => ({ type: "Literal", value: x }))

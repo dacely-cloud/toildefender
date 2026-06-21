@@ -46,7 +46,7 @@ module.exports = class Scopes {
                         init: { type: "ArrayExpression", elements: [] }
                     }
                 ],
-                $$defendjs$scopeObject: true
+                veilmark$scopeObject: true
             };
             
             this.esutils.insertIntoScope(scope, scopeDecl);
@@ -70,7 +70,7 @@ module.exports = class Scopes {
                                         object: { type: "Identifier", name: scopeVarName },
                                         property: { type: "Literal", value: index },
                                         computed: true,
-                                        $$defendjs$scopeObjectReference: true
+                                        veilmark$scopeObjectReference: true
                                     },
                                     right: def.node.init
                                 }
@@ -93,17 +93,17 @@ module.exports = class Scopes {
                                 object: { type: "Identifier", name: scopeVarName },
                                 property: { type: "Literal", value: index },
                                 computed: true,
-                                $$defendjs$scopeObjectReference: true
+                                veilmark$scopeObjectReference: true
                             });
                         });
                     } else if (def.type == "CatchClause") {
-                        Object.defineProperty(scope.block, "$$defendjs$exception", {
+                        Object.defineProperty(scope.block, "veilmark$exception", {
                             value: {
                                 type: "MemberExpression",
                                 object: { type: "Identifier", name: scopeVarName },
                                 property: { type: "Literal", value: index },
                                 computed: true,
-                                $$defendjs$scopeObjectReference: true
+                                veilmark$scopeObjectReference: true
                             },
                             configurable: true
                         });
@@ -117,7 +117,7 @@ module.exports = class Scopes {
                                     object: { type: "Identifier", name: scopeVarName },
                                     property: { type: "Literal", value: index },
                                     computed: true,
-                                    $$defendjs$scopeObjectReference: true
+                                    veilmark$scopeObjectReference: true
                                 },
                                 right: def.name
                             }
@@ -128,14 +128,14 @@ module.exports = class Scopes {
                                 object: { type: "Identifier", name: scopeVarName },
                                 property: { type: "Literal", value: index },
                                 computed: true,
-                                $$defendjs$scopeObjectReference: true
+                                veilmark$scopeObjectReference: true
                             });
                         });
                     } else if (def.type == "FunctionName") {
                         variable.references.forEach(reference => {
                             this.esutils.replaceNode(scope.block, reference.identifier, {
                                 type: "CallExpression",
-                                callee: { type: "Identifier", name: "$$defendjs$bind" },
+                                callee: { type: "Identifier", name: "veilmark$bind" },
                                 arguments: [
                                     reference.identifier,
                                     { type: "Identifier", name: scopeVarName }
@@ -161,7 +161,7 @@ module.exports = class Scopes {
                 if (node.type == "FunctionExpression") {
                     return {
                         type: "CallExpression",
-                        callee: { type: "Identifier", name: "$$defendjs$bind" },
+                        callee: { type: "Identifier", name: "veilmark$bind" },
                         arguments: [
                             node,
                             { type: "Identifier", name: scopeVarName }

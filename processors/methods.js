@@ -1,11 +1,11 @@
 "use strict";
 
 const METHODS_INJECT = `
-function $$defendjs$mergeArguments(a, b) {
+function veilmark$mergeArguments(a, b) {
     return Array.prototype.slice.call(a).concat(Array.prototype.slice.call(b));
 }
 
-function $$defendjs$bind() {
+function veilmark$bind() {
     var fn = arguments[0], prepend = Array.prototype.slice.call(arguments, 1);
     var wrapper = function() {
         return fn.apply(this, prepend.concat(Array.prototype.slice.call(arguments)));
@@ -14,23 +14,37 @@ function $$defendjs$bind() {
     return wrapper;
 }
 
-function $$defendjs$sliceArguments(args, num) {
+function veilmark$sliceArguments(args, num) {
     return Array.prototype.slice.call(args, num);
 }
 
-function $$defendjs$toObject(arr) {
+function veilmark$toObject(schema, values) {
     var obj = {};
-    for (var i = 0; i < arr.length; i += 2) {
-        obj[arr[i]] = arr[i + 1];
+    if (values === undefined) {
+        for (var legacy = 0; legacy < schema.length; legacy += 2) {
+            obj[schema[legacy]] = schema[legacy + 1];
+        }
+        return obj;
+    }
+    var cursor = 2;
+    var salt = schema[0];
+    var count = schema[1];
+    for (var i = 0; i < count; i += 1) {
+        var len = schema[cursor++] ^ ((salt + i * 131) & 65535);
+        var key = "";
+        for (var j = 0; j < len; j += 1) {
+            key += String.fromCharCode(schema[cursor++] ^ ((salt + i * 257 + j * 17) & 65535));
+        }
+        obj[key] = values[i];
     }
     return obj;
 }
 
-function $$defendjs$decodeString(arr) {
+function veilmark$decodeString(arr) {
     return arr.map(function(x) { return String.fromCharCode(x & ~0 >>> 16) + String.fromCharCode(x >> 16); }).join("");
 }
 
-function $$defendjs$fromCharCodes() {
+function veilmark$fromCharCodes() {
     return String.fromCharCode.apply(null, arguments);
 }
 
@@ -47,8 +61,10 @@ var estest = require("../estest");
 var traverser = require("../traverser");
 var utils = require("../utils");
 
+const ANON_METHOD_ID = "veilmark$anonymousMethodId";
+
 /**
- * Wrap function with $$defendjs$bind.
+ * Wrap function with veilmark$bind.
  * @param {Identifier} Function identifier
  * @returns {Node} Wrapped function
  */
@@ -57,11 +73,25 @@ function createMethodStub(id) {
     
     return {
         type: "CallExpression",
-        callee: { type: "Identifier", name: "$$defendjs$bind" },
+        callee: { type: "Identifier", name: "veilmark$bind" },
         arguments: [
             id
         ]
     };
+}
+
+function anonymousMethodName(node) {
+    assert.equal(node.type, "FunctionExpression");
+
+    if (!node[ANON_METHOD_ID]) {
+        Object.defineProperty(node, ANON_METHOD_ID, {
+            configurable: false,
+            enumerable: false,
+            value: `veilmark$anon$${utils.hash(node)}`
+        });
+    }
+
+    return node[ANON_METHOD_ID];
 }
 
 /**
@@ -75,6 +105,14 @@ function getArgumentIndex(method, identifier) {
     assert.equal(identifier.type, "Identifier");
     
     return _.findIndex(method.params, x => x.name == identifier.name);
+}
+
+function rawArgumentsIdentifier() {
+    return {
+        type: "Identifier",
+        name: "arguments",
+        veilmark$rawArguments: true
+    };
 }
 
 module.exports = class Methods {
@@ -112,10 +150,10 @@ module.exports = class Methods {
     }
     
     /**
-     * Inserts code to slice arguments from the arguments array like
+     * Inserts code to copy/slice arguments from the arguments array like
      * function () { ... }
      * to
-     * function () { arguments = $$defendjs$sliceArguments(arguments, 1); ... }
+     * function () { var veilmark$arguments = veilmark$sliceArguments(arguments, 1); ... }
      * @param {Function} method
      * @param {number} num Number of arguments to be sliced off. 0 if none.
      */
@@ -123,38 +161,30 @@ module.exports = class Methods {
         assert.ok(estest.isFunction(method));
         assert.equal(typeof num, "number");
         
-        if (num > 0) {
-            method.body.body.splice(0, 0, {
-                type: "ExpressionStatement",
-                expression: {
-                    type: "AssignmentExpression",
-                    operator: "=",
-                    left: { type: "Identifier", name: "arguments" },
-                    right: {
-                        type: "CallExpression",
-                        callee: { type: "Identifier", name: "$$defendjs$sliceArguments" },
-                        arguments: [
-                            { type: "Identifier", name: "arguments" },
-                            { type: "Literal", value: num, $$defendjs$removeFirstArguments: true }
-                        ]
-                    }
-                },
-                $$defendjs$slicingArguments: true
-            });
-        }
-        
         method.body.body.splice(0, 0, {
             type: "VariableDeclaration",
             kind: "var",
             declarations: [
                 {
                     type: "VariableDeclarator",
-                    id: { type: "Identifier", name: "$$defendjs$arguments" },
-                    init: { type: "Identifier", name: "arguments" }
+                    id: { type: "Identifier", name: "veilmark$arguments" },
+                    init: rawArgumentsIdentifier()
+                },
+                {
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: "veilmark$bareArguments" },
+                    init: num > 0 ? {
+                        type: "CallExpression",
+                        callee: { type: "Identifier", name: "veilmark$sliceArguments" },
+                        arguments: [
+                            rawArgumentsIdentifier(),
+                            { type: "Literal", value: num, veilmark$removeFirstArguments: true }
+                        ]
+                    } : rawArgumentsIdentifier()
                 }
             ],
-            $$defendjs$reassigningArguments: true,
-            $$defendjs$followsSlicingArguments: num > 0
+            veilmark$reassigningArguments: true,
+            veilmark$followsSlicingArguments: num > 0
         });
     }
 
@@ -172,7 +202,7 @@ module.exports = class Methods {
             if (node.type == "FunctionDeclaration") { // Statement
                 methods.push(node.id.name);
             } else if (node.type == "FunctionExpression") { // Expression
-                methods.push(`$$anon$${utils.hash(node)}`);
+                methods.push(anonymousMethodName(node));
             }
             
             return node;
@@ -196,7 +226,7 @@ module.exports = class Methods {
                 methods.push(node);
                 return { type: "ExpressionStatement", expression: createMethodStub(node.id) }; // This is not ideal
             } else if (node.type == "FunctionExpression") { // Expression
-                var id = `$$anon$${utils.hash(node)}`;
+                var id = anonymousMethodName(node);
                 // Merge into old object instead of creating a new one to preserve object references
                 methods.push(_.assign(node, {
                     type: "FunctionDeclaration",
@@ -215,9 +245,9 @@ module.exports = class Methods {
      * Replaces direct argument references with arguments references like
      * function (a) { return a; }
      * to
-     * function (a) { return $$defendjs$arguments[0]; }
+     * function (a) { return veilmark$arguments[0]; }
      * @param {Function} method Function whose body will be transformed
-     * @param {boolean} useReassignedVariable Use $$defendjs$arguments instead of arguments
+     * @param {boolean} useReassignedVariable Use veilmark$arguments instead of arguments
      * @returns {Function} Function from method parameter
      */
     replaceArgumentReferences (method, useReassignedVariable) {
@@ -225,11 +255,15 @@ module.exports = class Methods {
         
         traverser.traverse(method.body, [], (node, stack) => {
             if (node.type == "Identifier") {
+                var nestedFunction = stack.some(frame => estest.isFunction(frame.node));
+                if (useReassignedVariable && node.name == "arguments" && !node.veilmark$rawArguments && !nestedFunction) {
+                    return { type: "Identifier", name: "veilmark$bareArguments" };
+                }
                 var index = getArgumentIndex(method, node);
                 if (index != -1) {
                     return {
                         type: "MemberExpression",
-                        object: { type: "Identifier", name: useReassignedVariable ? "$$defendjs$arguments" : "arguments" },
+                        object: { type: "Identifier", name: useReassignedVariable ? "veilmark$arguments" : "arguments" },
                         property: { type: "Literal", value: index },
                         computed: true
                     };
@@ -248,7 +282,7 @@ module.exports = class Methods {
      * Replaces function calls with main calls like
      * test()
      * to
-     * $$defendjs$bind(main, 1234)()
+     * veilmark$bind(main, 1234)()
      * @param {Node} ast Root node
      * @param {Object[]} methodEntryExitPoints Method entry point table
      * @param {number} methodEntryExitPoints[].entry Entry point
@@ -261,7 +295,7 @@ module.exports = class Methods {
             if (node.type == "Identifier" && methodEntryExitPoints[node.name] && methodEntryExitPoints[node.name].entry) {
                 return {
                     type: "CallExpression",
-                    callee: { type: "Identifier", name: "$$defendjs$bind" },
+                    callee: { type: "Identifier", name: "veilmark$bind" },
                     arguments: [
                         { type: "Identifier", name: "main" },
                         { type: "Identifier", name: methodEntryExitPoints[node.name].entry }
@@ -274,9 +308,9 @@ module.exports = class Methods {
 
     /**
      * Bumps all arguments indices like
-     * $$defendjs$arguments[0]
+     * veilmark$arguments[0]
      * to
-     * $$defendjs$arguments[1]
+     * veilmark$arguments[1]
      * @param {Function} method Function whose body will be transformed
      * @param {number} inc Number to be added to all argument indices
      */
@@ -285,10 +319,10 @@ module.exports = class Methods {
         assert.equal(typeof inc, "number");
         
         traverser.traverse(method.body, [], (node, stack) => {
-            if (node.type == "MemberExpression" && node.object.type == "Identifier" && node.object.name == "$$defendjs$arguments") {
+            if (node.type == "MemberExpression" && node.object.type == "Identifier" && node.object.name == "veilmark$arguments") {
                 node.property.value += inc;
             }
-            if (node.$$defendjs$removeFirstArguments) {
+            if (node.veilmark$removeFirstArguments) {
                 node.value += inc;
             }
             return node;

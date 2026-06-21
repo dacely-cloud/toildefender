@@ -61,6 +61,9 @@ exports.visitChildren = function (node, processor) {
     keys.forEach(key => {
         if (Array.isArray(node[key])) {
             node[key] = node[key].map(x => {
+                if (x == null) {
+                    return x;
+                }
                 var repl = processor(x, key);
                 assert(repl);
                 return repl;
@@ -82,7 +85,9 @@ exports.visitChildrenEx = function (node, processor) {
         if (Array.isArray(node[key])) {
             let i = node[key].length;
             while (i--) {
-                assert(node[key][i]);
+                if (node[key][i] == null) {
+                    continue;
+                }
                 let replacement = processor(node[key][i], key);
                 assert(replacement);
                 if (replacement.length == 1) {

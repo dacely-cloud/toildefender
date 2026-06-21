@@ -147,7 +147,7 @@ function makeStringByteArrayCall(str) {
     
     return {
         type: "CallExpression",
-        callee: { type: "Identifier", name: "$$defendjs$fromCharCodes" },
+        callee: { type: "Identifier", name: "veilmark$fromCharCodes" },
         arguments: str.split("").map(x => ({ type: "Literal", value: x.charCodeAt() }))
     };
 }

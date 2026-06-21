@@ -6,7 +6,7 @@ var path = require("path");
 
 var _ = require("lodash");
 
-var defendjs = require("./obfuscator");
+var toildefender = require("./obfuscator");
 
 exports.run = function () {
 
@@ -15,7 +15,7 @@ exports.run = function () {
         console.info(
             "# Usage\n" +
             "\n" + 
-            "defendjs --input [directory] --output [directory] --features [features] --preprocessor [variable]\n" +
+            "toildefender --input [directory] --output [directory] --features [features] --preprocessor [variable]\n" +
             "\n" +
             "# Parameters\n" +
             "\n" +
@@ -26,7 +26,7 @@ exports.run = function () {
             "\tPath to output directory.\n" +
             "\n" +
             "--features\n" +
-            "\tComma-separated list of features. (available features: " + _.join(_.keys(defendjs.features), ", ") + ")\n" +
+            "\tComma-separated list of features. (available features: " + _.join(_.keys(toildefender.features), ", ") + ")\n" +
             "\te.g. --features scope,control_flow,compress\n" +
             "\n" +
             "--preprocessor\n" +
@@ -44,11 +44,11 @@ exports.run = function () {
             "\n" +
             (() => { switch (os.platform()) { // bit of a pointless feature, but its neat
                 case "win32":
-                    return "defendjs --input \"D:\\project\\src\" --output \"D:\\project\\dist\" --features scope,control_flow,compress --preprocessor PLATFORM_WINDOWS\n";
+                    return "toildefender --input \"D:\\project\\src\" --output \"D:\\project\\dist\" --features scope,control_flow,compress --preprocessor PLATFORM_WINDOWS\n";
                 case "darwin":
-                    return "defendjs --input \"~/project/src\" --output \"~/project/dist\" --features scope,control_flow,compress --preprocessor PLATFORM_MACOS\n";
+                    return "toildefender --input \"~/project/src\" --output \"~/project/dist\" --features scope,control_flow,compress --preprocessor PLATFORM_MACOS\n";
                 default:
-                    return "defendjs --input \"~/project/src\" --output \"~/project/dist\" --features scope,control_flow,compress --preprocessor PLATFORM_LINUX\n";
+                    return "toildefender --input \"~/project/src\" --output \"~/project/dist\" --features scope,control_flow,compress --preprocessor PLATFORM_LINUX\n";
             } })() +
             "\n"
         );
@@ -91,7 +91,7 @@ exports.run = function () {
 
     let mainFiles = getMainFiles(files);
 
-    let features = _.mapValues(defendjs.features, (value, key) => _.includes(argv.features, key));
+    let features = _.mapValues(toildefender.features, (value, key) => _.includes(argv.features, key));
 
     let preprocessorVariables = _.fromPairs(_.map(argv.preprocessor, decl => {
         let [, variable, value] = /^\s*([\w\d]+)\s*(?:=\s*([\w\d]+))?\s*$/.exec(decl) || [];
@@ -100,7 +100,7 @@ exports.run = function () {
 
     let results = _.fromPairs(_.map(mainFiles, key => {
         console.info(`Obfuscating ${key} ...`);
-        return [key, defendjs.do({
+        return [key, toildefender.do({
             code: files[key],
             modulesCode: _.pickBy(files, (value, _key) => key != _key && isCodeFile(_key) && !mainFiles[_key]),
             features: features,
@@ -152,7 +152,9 @@ exports.run = function () {
 
     function getMainFiles(files) {
         let _package = files["package.json"] && JSON.parse(files["package.json"]);
-        if (_package && _package.defendjs && _package.defendjs.mainFiles) {
+        if (_package && _package.toildefender && _package.toildefender.mainFiles) {
+            return _package.toildefender.mainFiles;
+        } else if (_package && _package.defendjs && _package.defendjs.mainFiles) {
             return _package.defendjs.mainFiles;
         } else if (_package && _package.main) {
             return [ _package.main ];
