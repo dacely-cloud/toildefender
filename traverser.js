@@ -7,6 +7,12 @@ var estraverse = require("estraverse");
 var estest = require("./estest");
 var utils = require("./utils");
 
+var VISITOR_KEYS = Object.assign({}, estraverse.VisitorKeys, {
+    ChainExpression: [ "expression" ],
+    PropertyDefinition: [ "key", "value" ],
+    FieldDefinition: [ "key", "value" ]
+});
+
 // Depth-first
 exports.traverse = function (node, stack, processor) {
     assert.ok(estest.isNode(node));
@@ -57,7 +63,7 @@ exports.visitChildren = function (node, processor) {
     assert.ok(estest.isNode(node));
     assert.equal(typeof processor, "function");
     
-    var keys = estraverse.VisitorKeys[node.type] || [];
+    var keys = VISITOR_KEYS[node.type] || [];
     keys.forEach(key => {
         if (Array.isArray(node[key])) {
             node[key] = node[key].map(x => {
@@ -80,7 +86,7 @@ exports.visitChildrenEx = function (node, processor) {
     assert.ok(estest.isNode(node));
     assert.equal(typeof processor, "function");
     
-    var keys = estraverse.VisitorKeys[node.type] || [];
+    var keys = VISITOR_KEYS[node.type] || [];
     keys.forEach(key => {
         if (Array.isArray(node[key])) {
             let i = node[key].length;

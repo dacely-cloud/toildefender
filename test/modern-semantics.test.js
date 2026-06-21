@@ -70,6 +70,16 @@ function createRunContext() {
     return context;
 }
 
+function hasOptionalBabelTransform() {
+    try {
+        require.resolve("@babel/core");
+        require.resolve("@babel/preset-env");
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
 function runStrict(code) {
     return run(`"use strict";\n${code}`);
 }
@@ -250,7 +260,9 @@ test("flattens native async functions with an async dispatcher", async () => {
     assert.deepEqual(await runAsync(defended), await runAsync(code));
 });
 
-test("preserves Babel async regenerator callee bindings when async lowering is requested", async () => {
+test("preserves Babel async regenerator callee bindings when async lowering is requested", {
+    skip: hasOptionalBabelTransform() ? false : "optional Babel transform packages are not installed"
+}, async () => {
     await assertSameAsyncRuntimeResult(`
         async function load(value) {
             const next = await Promise.resolve(value + 2);
@@ -260,6 +272,7 @@ test("preserves Babel async regenerator callee bindings when async lowering is r
             globalThis.__result = value;
         });
     `, {
+        babel: true,
         babelPreserveAsync: false
     });
 });
@@ -315,6 +328,58 @@ test("supports common modern AST islands without Babel", () => {
         }
 
         globalThis.__result = rows;
+    `, {
+        babel: false
+    });
+});
+
+test("lowers modern expressions without Babel", () => {
+    assertSameRuntimeResult(`
+        const obj = {
+            x: 2,
+            inc(value) {
+                return this.x + value;
+            }
+        };
+        const missing = null;
+        const source = { a: 1, b: 2, c: 3 };
+        const { a, z = 8, ...rest } = source;
+        const spread = { ...rest, d: 4 };
+
+        globalThis.__result = [
+            obj?.inc?.(3) ?? -1,
+            missing?.inc?.(3) ?? "none",
+            a,
+            z,
+            spread.b,
+            spread.c,
+            spread.d
+        ];
+    `, {
+        babel: false
+    });
+});
+
+test("lowers class fields and private fields without Babel", () => {
+    assertSameRuntimeResult(`
+        class Counter {
+            #value = 1;
+            step = 2;
+            static #base = 10;
+            static offset = 3;
+
+            set(value) {
+                this.#value = value;
+            }
+
+            read() {
+                return this.#value + this.step + Counter.#base + Counter.offset;
+            }
+        }
+
+        const counter = new Counter();
+        counter.set(5);
+        globalThis.__result = counter.read();
     `, {
         babel: false
     });
@@ -440,7 +505,8 @@ test("packs object literal keys into a numeric schema instead of alternating key
     `;
     const defended = defendInspectableCode(code);
 
-    assert.match(defended, /veilmark\$toObject\(\s*\[[\s\S]*?\]\s*,\s*\[/);
+    assert.match(defended, /veilmark\$toObject\([^,]+,\s*\[[\s\S]*?\]\s*,\s*\[/);
+    assert.match(defended, /veilmark\$objectKeys/);
     assert.equal(defended.includes("alpha"), false);
     assert.equal(defended.includes("beta"), false);
     assert.equal(defended.includes("gamma"), false);

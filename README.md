@@ -407,24 +407,25 @@ Main options:
 | `code` | Entry source code. |
 | `modulesCode` | Map of dependency filename to source code. |
 | `features` | Feature switches for the classic pipeline. |
-| `babelPreserveAsync` | Defaults to `true`; keeps async/generator syntax native so async-aware flattening can avoid Babel regenerator helper bloat. Set to `false` for legacy async lowering. |
+| `babel` | Defaults to `false`; set to `true` only when you want the optional Babel downlevel transform before protection. |
+| `babelPreserveAsync` | Defaults to `true`; when `babel: true`, keeps async/generator syntax native so async-aware flattening can avoid Babel regenerator helper bloat. Set to `false` for legacy async lowering. |
 | `protections.virtualMachine` | User-facing VM bytecode backend configuration. |
 | `protections.hashMesh` | User-facing hash-mesh unlock configuration. |
 | `numericVm` | Lower-level numeric VM configuration retained for internal callers. |
 | `preprocessorVariables` | Compile-time preprocessor constants. |
 | `logLevel` | `error`, `warn`, `info`, `debug`, or `log`. |
 
-When `babelPreserveAsync` is enabled, Babel still normalizes syntax such as
-classes, arrows, destructuring, and spread for the older AST passes, but leaves
-async and generator functions for ToilDefender's async/generator dispatchers.
-This avoids the large regenerator helper path for modern browser and Node
-bundles.
+The default path parses modern syntax directly and normalizes the constructs
+that older obfuscation passes cannot consume yet. The native AST path supports
+plain classes as native islands, class fields, private fields, arrows, for-of
+loops, async/generator functions, optional chaining, nullish coalescing, object
+rest/spread, and spread calls.
 
-The `babel: false` path supports a growing native AST subset, including plain
-classes as native islands, arrows, for-of loops, async/generator functions, and
-simple spread calls. Syntax that Esprima cannot parse yet, such as class fields,
-private fields, optional chaining, nullish coalescing, and object rest/spread,
-still needs the Babel normalization path until the parser front end is replaced.
+When `babel: true` and `babelPreserveAsync` is enabled, optional Babel packages
+installed by the caller can still downlevel syntax for legacy browser targets
+while leaving async and generator functions for ToilDefender's async/generator
+dispatchers. This avoids the large regenerator helper path for modern browser
+and Node bundles.
 
 ## Toil Integration
 

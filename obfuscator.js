@@ -6,14 +6,15 @@ var fs = require("fs");
 var assert = require("assert");
 
 var _ = require("lodash");
-var legacyBabel = require("babel-core");
-var modernBabel = (() => {
+function requireOptional(name) {
     try {
-        return require("@babel/core");
+        return require(name);
     } catch (e) {
         return null;
     }
-})();
+}
+
+var modernParser = requireOptional("@babel/parser");
 var escodegen = require("escodegen");
 var escope = require("escope");
 var esprima = require("esprima");
@@ -39,7 +40,7 @@ var prNumericVm         = require("./processors/numericVm");
 var prHealth            = require("./processors/health");
 
 var defaultOptions = {
-    babel: true,
+    babel: false,
     babelTarget: "ie 11",
     babelPreserveAsync: true,
     features: {
@@ -164,7 +165,7 @@ exports.features = _.fromPairs(
  * @param {Object} options - Configuration.
  * @param {string} options.code - Code of entry point file to be obfuscated.
  * @param {Object.<string, string>} options.modulesCode - Code of all of options.code's depedencies.
- * @param {boolean} [options.babel = true] - Whether to run babel with ES2015 preset before obfuscating.
+ * @param {boolean} [options.babel = false] - Whether to run the optional Babel transform before obfuscating.
  * @param {boolean} [options.babelPreserveAsync = true] - Whether Babel should leave async/generator syntax for async-aware flattening instead of emitting regenerator helpers.
  * @param {Object.<string, boolean>} [options.features = All enabled] - Feature configuration.
  * @param {logAdapterCallback} [options.logAdapter = Console] - Logging adapter.
@@ -250,7 +251,15 @@ exports.do = function (options) {
     }
 
     function transformModernSyntax(code, label) {
+        var modernBabel = requireOptional("@babel/core");
         if (modernBabel) {
+            var presetEnvPath;
+            try {
+                presetEnvPath = require.resolve("@babel/preset-env");
+            } catch (e) {
+                throw new Error("Babel transform requested, but @babel/preset-env is not installed");
+            }
+
             var presetOptions = {
                 modules: "commonjs",
                 targets: options.babelTarget,
@@ -270,12 +279,17 @@ exports.do = function (options) {
                 sourceType: "unambiguous",
                 presets: [
                     [
-                        require.resolve("@babel/preset-env"),
+                        presetEnvPath,
                         presetOptions
                     ]
                 ]
             });
             return result && result.code || code;
+        }
+
+        var legacyBabel = requireOptional("babel-core");
+        if (!legacyBabel) {
+            throw new Error("Babel transform requested, but neither @babel/core nor babel-core is installed");
         }
 
         var babelOptions = {
@@ -302,6 +316,54 @@ exports.do = function (options) {
             ].map(require.resolve)
         };
         return legacyBabel.transform(code, babelOptions).code;
+    }
+
+    function parseSource(code, options) {
+        try {
+            return esprima.parse(code, options);
+        } catch (esprimaError) {
+            if (!modernParser) {
+                throw esprimaError;
+            }
+
+            var parsed = modernParser.parse(code, {
+                sourceType: "unambiguous",
+                plugins: [
+                    "estree",
+                    "classProperties",
+                    "classPrivateProperties",
+                    "classPrivateMethods",
+                    "optionalChaining",
+                    "nullishCoalescingOperator",
+                    "objectRestSpread"
+                ]
+            });
+            return {
+                type: "Program",
+                body: parsed.program.body,
+                sourceType: parsed.program.sourceType
+            };
+        }
+    }
+
+    function containsNodeType(root, names) {
+        var found = false;
+        var lookup = {};
+        names.forEach(name => {
+            lookup[name] = true;
+        });
+        traverser.traverseEx(root, [], function (node) {
+            if (lookup[node.type]) {
+                found = true;
+                this.abort();
+            }
+            return node;
+        });
+        return found;
+    }
+
+    function hasMangleUnsupportedSyntax(root) {
+        return containsNodeType(root, [ "Super" ]);
     }
 
     function dispatcherForMethod(method) {
@@ -381,8 +443,8 @@ exports.do = function (options) {
     }
 
     doTask("parse", true, () => {
-        modulesAST = _.mapValues(options.modulesCode, (code, key) => tryTag(key, () => esprima.parse(code, parseOptions)));
-        modulesAST.app = tryTag("app", () => esprima.parse(options.code, parseOptions));
+        modulesAST = _.mapValues(options.modulesCode, (code, key) => tryTag(key, () => parseSource(code, parseOptions)));
+        modulesAST.app = tryTag("app", () => parseSource(options.code, parseOptions));
     });
     
     // Merge depedencies into main modules
@@ -576,7 +638,7 @@ exports.do = function (options) {
         });
     });
 
-    doTask("add_runtime_helpers", options.features.scope || options.features.object_packing || options.features.literals, () => {
+    doTask("add_runtime_helpers", options.features.scope || options.features.object_packing || options.features.literals || options.babel === false, () => {
         addCustomBindOnce();
     });
     
@@ -592,6 +654,10 @@ exports.do = function (options) {
     });
     
     doTask("mangle", options.features.mangle, () => {
+        if (hasMangleUnsupportedSyntax(ast)) {
+            logger.warn("Skipping mangle because native modern syntax is not supported by the legacy mangler");
+            return;
+        }
         var uglifier = new prUglifier(logger);
         if (ast.type == "Program") {
             ast.type = "BlockStatement";

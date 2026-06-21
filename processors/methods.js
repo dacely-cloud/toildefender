@@ -18,7 +18,14 @@ function veilmark$sliceArguments(args, num) {
     return Array.prototype.slice.call(args, num);
 }
 
-function veilmark$toObject(schema, values) {
+var veilmark$objectKeys = {};
+
+function veilmark$toObject(cacheKey, schema, values) {
+    if (values === undefined && Array.isArray(cacheKey)) {
+        values = schema;
+        schema = cacheKey;
+        cacheKey = "";
+    }
     var obj = {};
     if (values === undefined) {
         for (var legacy = 0; legacy < schema.length; legacy += 2) {
@@ -26,18 +33,43 @@ function veilmark$toObject(schema, values) {
         }
         return obj;
     }
+    var decoded = cacheKey ? veilmark$objectKeys[cacheKey] : null;
+    if (decoded) {
+        for (var cached = 0; cached < decoded.length; cached += 1) {
+            obj[decoded[cached]] = values[cached];
+        }
+        return obj;
+    }
     var cursor = 2;
     var salt = schema[0];
     var count = schema[1];
+    var keys = new Array(count);
     for (var i = 0; i < count; i += 1) {
         var len = schema[cursor++] ^ ((salt + i * 131) & 65535);
         var key = "";
         for (var j = 0; j < len; j += 1) {
             key += String.fromCharCode(schema[cursor++] ^ ((salt + i * 257 + j * 17) & 65535));
         }
+        keys[i] = key;
         obj[key] = values[i];
     }
+    if (cacheKey) {
+        veilmark$objectKeys[cacheKey] = keys;
+    }
     return obj;
+}
+
+function veilmark$objectWithoutKeys(source, excluded) {
+    var target = {};
+    if (source == null) {
+        return target;
+    }
+    for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key) && excluded.indexOf(key) < 0) {
+            target[key] = source[key];
+        }
+    }
+    return target;
 }
 
 function veilmark$decodeString(arr) {

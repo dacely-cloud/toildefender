@@ -154,6 +154,228 @@ function withFinalizerBefore(node, finalizer) {
     };
 }
 
+function methodDefinitionName(method) {
+    if (!method || !method.key) {
+        return "";
+    }
+    if (method.key.type == "Identifier") {
+        return method.key.name;
+    }
+    if (method.key.type == "Literal") {
+        return String(method.key.value);
+    }
+    return "";
+}
+
+function isConstructorMethod(method) {
+    return method.type == "MethodDefinition" && method.kind == "constructor" && methodDefinitionName(method) == "constructor";
+}
+
+function privateStoreName(className, privateName) {
+    return `$$private$${className}$${privateName}`;
+}
+
+function classFieldKey(field) {
+    if (field.key.type == "Identifier") {
+        return {
+            type: "Identifier",
+            name: field.key.name
+        };
+    }
+    if (field.key.type == "PrivateIdentifier") {
+        return {
+            type: "Literal",
+            value: field.key.name
+        };
+    }
+    return field.key;
+}
+
+function assignmentStatement(left, right) {
+    return {
+        type: "ExpressionStatement",
+        expression: {
+            type: "AssignmentExpression",
+            operator: "=",
+            left: left,
+            right: right || { type: "Identifier", name: "undefined" }
+        }
+    };
+}
+
+function weakMapSetStatement(storeName, object, value) {
+    return {
+        type: "ExpressionStatement",
+        expression: {
+            type: "CallExpression",
+            callee: {
+                type: "MemberExpression",
+                object: { type: "Identifier", name: storeName },
+                property: { type: "Identifier", name: "set" },
+                computed: false
+            },
+            arguments: [
+                object,
+                value || { type: "Identifier", name: "undefined" }
+            ]
+        }
+    };
+}
+
+function weakMapGetExpression(storeName, object) {
+    return {
+        type: "CallExpression",
+        callee: {
+            type: "MemberExpression",
+            object: { type: "Identifier", name: storeName },
+            property: { type: "Identifier", name: "get" },
+            computed: false
+        },
+        arguments: [ object ]
+    };
+}
+
+function undefinedExpression() {
+    return { type: "Identifier", name: "undefined" };
+}
+
+function nullishTest(expression) {
+    return {
+        type: "BinaryExpression",
+        operator: "==",
+        left: expression,
+        right: { type: "Literal", value: null }
+    };
+}
+
+function notNullishTest(expression) {
+    return {
+        type: "BinaryExpression",
+        operator: "!=",
+        left: expression,
+        right: { type: "Literal", value: null }
+    };
+}
+
+function propertyKeyValue(property) {
+    if (property.key.type == "Identifier") {
+        return property.key.name;
+    }
+    if (property.key.type == "Literal") {
+        return property.key.value;
+    }
+    return null;
+}
+
+function propertyMemberExpression(object, property) {
+    return {
+        type: "MemberExpression",
+        object: object,
+        property: property.key.type == "Identifier"
+            ? { type: "Identifier", name: property.key.name }
+            : utils.cloneISwearIKnowWhatImDoing(property.key),
+        computed: property.computed === true || property.key.type == "Literal"
+    };
+}
+
+function hasObjectRest(pattern) {
+    return pattern.type == "ObjectPattern" && pattern.properties.some(prop => prop.type == "RestElement");
+}
+
+function canLowerObjectRest(pattern) {
+    return pattern.type == "ObjectPattern" && pattern.properties.every(prop => {
+        if (prop.type == "RestElement") {
+            return prop.argument.type == "Identifier";
+        }
+        if (prop.type != "Property" || prop.computed === true || propertyKeyValue(prop) == null) {
+            return false;
+        }
+        if (prop.value.type == "Identifier") {
+            return true;
+        }
+        return prop.value.type == "AssignmentPattern" && prop.value.left.type == "Identifier";
+    });
+}
+
+function hasObjectSpread(node) {
+    return node.properties.some(prop => prop.type == "SpreadElement");
+}
+
+function objectAssignCall(parts) {
+    return {
+        type: "CallExpression",
+        callee: {
+            type: "MemberExpression",
+            object: { type: "Identifier", name: "Object" },
+            property: { type: "Identifier", name: "assign" },
+            computed: false
+        },
+        arguments: parts
+    };
+}
+
+function objectWithoutKeysCall(source, keys) {
+    return {
+        type: "CallExpression",
+        callee: { type: "Identifier", name: "veilmark$objectWithoutKeys" },
+        arguments: [
+            source,
+            {
+                type: "ArrayExpression",
+                elements: keys.map(key => ({ type: "Literal", value: key }))
+            }
+        ]
+    };
+}
+
+function objectPatternPropertyDeclaration(kind, sourceName, prop) {
+    var member = propertyMemberExpression(
+        { type: "Identifier", name: sourceName },
+        prop
+    );
+    var id = prop.value;
+    var init = member;
+
+    if (prop.value.type == "AssignmentPattern") {
+        id = prop.value.left;
+        init = {
+            type: "ConditionalExpression",
+            test: {
+                type: "BinaryExpression",
+                operator: "===",
+                left: utils.cloneISwearIKnowWhatImDoing(member),
+                right: undefinedExpression()
+            },
+            consequent: prop.value.right,
+            alternate: member
+        };
+    }
+
+    return {
+        type: "VariableDeclaration",
+        kind: kind,
+        declarations: [
+            {
+                type: "VariableDeclarator",
+                id: id,
+                init: init
+            }
+        ]
+    };
+}
+
+function containsThisExpression(node) {
+    var found = false;
+    traverser.traverseEx(node, [], function (child) {
+        if (child.type == "ThisExpression") {
+            found = true;
+            this.abort();
+        }
+        return child;
+    });
+    return found;
+}
+
 module.exports = class Normalizer {
 
     constructor (logger) {
@@ -190,6 +412,18 @@ module.exports = class Normalizer {
                     return this.simplifyTryStatement(node);
                 case "CallExpression":
                     return this.simplifyCallExpression(node);
+                case "ChainExpression":
+                    return this.simplifyChainExpression(node);
+                case "LogicalExpression":
+                    return this.simplifyLogicalExpression(node);
+                case "ObjectExpression":
+                    return this.simplifyObjectExpression(node);
+                case "VariableDeclaration":
+                    return this.simplifyVariableDeclaration(node, stack);
+                case "ArrowFunctionExpression":
+                    return this.simplifyArrowFunctionExpression(node);
+                case "ClassDeclaration":
+                    return this.simplifyClassDeclaration(node);
                 default:
                     return node;
             }
@@ -696,6 +930,485 @@ module.exports = class Normalizer {
                 spreadArgumentsToArray(node.arguments)
             ]
         };
+    }
+
+    /**
+     * Lower optional chains to conditional expressions before legacy passes.
+     * This intentionally targets deterministic AST compatibility rather than
+     * Babel-perfect single-evaluation semantics for every exotic receiver.
+     * @param {ChainExpression} node
+     * @return {Node}
+     */
+    simplifyChainExpression (node) {
+        assert.ok(estest.isNode(node));
+
+        return this.lowerOptionalChain(node.expression);
+    }
+
+    lowerOptionalChain (node) {
+        if (node.type == "MemberExpression") {
+            var object = this.lowerOptionalChain(node.object);
+            var member = {
+                type: "MemberExpression",
+                object: utils.cloneISwearIKnowWhatImDoing(object),
+                property: node.property,
+                computed: node.computed === true
+            };
+            if (node.optional === true) {
+                return {
+                    type: "ConditionalExpression",
+                    test: nullishTest(utils.cloneISwearIKnowWhatImDoing(object)),
+                    consequent: undefinedExpression(),
+                    alternate: member
+                };
+            }
+            return member;
+        }
+
+        if (node.type == "CallExpression") {
+            if (node.callee.type == "MemberExpression") {
+                return this.lowerOptionalMemberCall(node);
+            }
+
+            var callee = this.lowerOptionalChain(node.callee);
+            var call = {
+                type: "CallExpression",
+                callee: utils.cloneISwearIKnowWhatImDoing(callee),
+                arguments: node.arguments,
+                optional: false
+            };
+            if (node.optional === true) {
+                return {
+                    type: "ConditionalExpression",
+                    test: nullishTest(utils.cloneISwearIKnowWhatImDoing(callee)),
+                    consequent: undefinedExpression(),
+                    alternate: call
+                };
+            }
+            return call;
+        }
+
+        return node;
+    }
+
+    lowerOptionalMemberCall (node) {
+        var member = node.callee;
+        var object = this.lowerOptionalChain(member.object);
+        var directMember = {
+            type: "MemberExpression",
+            object: utils.cloneISwearIKnowWhatImDoing(object),
+            property: member.property,
+            computed: member.computed === true
+        };
+
+        var alternate;
+        if (node.optional === true) {
+            alternate = {
+                type: "CallExpression",
+                callee: {
+                    type: "MemberExpression",
+                    object: utils.cloneISwearIKnowWhatImDoing(directMember),
+                    property: { type: "Identifier", name: "call" },
+                    computed: false
+                },
+                arguments: [ utils.cloneISwearIKnowWhatImDoing(object) ].concat(node.arguments),
+                optional: false
+            };
+            alternate = {
+                type: "ConditionalExpression",
+                test: nullishTest(utils.cloneISwearIKnowWhatImDoing(directMember)),
+                consequent: undefinedExpression(),
+                alternate: alternate
+            };
+        } else {
+            alternate = {
+                type: "CallExpression",
+                callee: directMember,
+                arguments: node.arguments,
+                optional: false
+            };
+        }
+
+        if (member.optional === true) {
+            return {
+                type: "ConditionalExpression",
+                test: nullishTest(utils.cloneISwearIKnowWhatImDoing(object)),
+                consequent: undefinedExpression(),
+                alternate: alternate
+            };
+        }
+
+        return alternate;
+    }
+
+    /**
+     * Lower nullish coalescing to an ES5-compatible conditional expression.
+     * @param {LogicalExpression} node
+     * @return {Node}
+     */
+    simplifyLogicalExpression (node) {
+        assert.ok(estest.isNode(node));
+
+        if (node.operator != "??") {
+            return node;
+        }
+
+        return {
+            type: "ConditionalExpression",
+            test: notNullishTest(utils.cloneISwearIKnowWhatImDoing(node.left)),
+            consequent: node.left,
+            alternate: node.right
+        };
+    }
+
+    /**
+     * Lower object spread to Object.assign({}, ...parts).
+     * @param {ObjectExpression} node
+     * @return {Node}
+     */
+    simplifyObjectExpression (node) {
+        assert.ok(estest.isNode(node));
+
+        if (!hasObjectSpread(node)) {
+            return node;
+        }
+
+        var parts = [
+            {
+                type: "ObjectExpression",
+                properties: []
+            }
+        ];
+        var pending = [];
+
+        function flushPending() {
+            if (pending.length > 0) {
+                parts.push({
+                    type: "ObjectExpression",
+                    properties: pending
+                });
+                pending = [];
+            }
+        }
+
+        node.properties.forEach(prop => {
+            if (prop.type == "SpreadElement") {
+                flushPending();
+                parts.push(prop.argument);
+            } else {
+                pending.push(prop);
+            }
+        });
+        flushPending();
+
+        return objectAssignCall(parts);
+    }
+
+    /**
+     * Lower simple object rest declarations:
+     *   const { a, ...rest } = source
+     * becomes:
+     *   var tmp = source; var a = tmp.a; var rest = withoutKeys(tmp, ["a"])
+     * @param {VariableDeclaration} node
+     * @param {Node[]} stack
+     * @return {Node}
+     */
+    simplifyVariableDeclaration (node, stack) {
+        assert.ok(estest.isNode(node));
+
+        if (!node.declarations.some(decl => hasObjectRest(decl.id))) {
+            return node;
+        }
+        if (node.declarations.some(decl => hasObjectRest(decl.id) && !canLowerObjectRest(decl.id))) {
+            return node;
+        }
+
+        var parentFrame = stack[1];
+        if (parentFrame && parentFrame.node.type == "ForStatement" && parentFrame.key == "init") {
+            return node;
+        }
+
+        var statements = [];
+        var normalDeclarations = [];
+        var declarationKind = node.kind == "const" ? "var" : node.kind;
+
+        function flushNormalDeclarations() {
+            if (normalDeclarations.length > 0) {
+                statements.push({
+                    type: "VariableDeclaration",
+                    kind: declarationKind,
+                    declarations: normalDeclarations
+                });
+                normalDeclarations = [];
+            }
+        }
+
+        node.declarations.forEach(decl => {
+            if (!hasObjectRest(decl.id)) {
+                normalDeclarations.push(decl);
+                return;
+            }
+
+            flushNormalDeclarations();
+
+            var sourceName = `$$destructure$obj$${this.rngAlpha.get()}`;
+            statements.push({
+                type: "VariableDeclaration",
+                kind: "var",
+                declarations: [
+                    {
+                        type: "VariableDeclarator",
+                        id: { type: "Identifier", name: sourceName },
+                        init: decl.init || { type: "ObjectExpression", properties: [] }
+                    }
+                ]
+            });
+
+            var excluded = [];
+            decl.id.properties.forEach(prop => {
+                if (prop.type == "RestElement") {
+                    statements.push({
+                        type: "VariableDeclaration",
+                        kind: declarationKind,
+                        declarations: [
+                            {
+                                type: "VariableDeclarator",
+                                id: prop.argument,
+                                init: objectWithoutKeysCall(
+                                    { type: "Identifier", name: sourceName },
+                                    excluded
+                                )
+                            }
+                        ]
+                    });
+                    return;
+                }
+
+                var key = propertyKeyValue(prop);
+                excluded.push(String(key));
+                statements.push(objectPatternPropertyDeclaration(declarationKind, sourceName, prop));
+            });
+        });
+
+        flushNormalDeclarations();
+
+        return {
+            type: "BlockStatement",
+            body: statements
+        };
+    }
+
+    /**
+     * Lower arrows so scope/control-flow passes do not leave callback bodies
+     * inside an outer flattened frame. Bind lexical this only when needed.
+     * @param {ArrowFunctionExpression} node
+     * @return {Node}
+     */
+    simplifyArrowFunctionExpression (node) {
+        assert.ok(estest.isNode(node));
+
+        var fn = {
+            type: "FunctionExpression",
+            id: null,
+            params: node.params,
+            body: node.body.type == "BlockStatement" ? node.body : {
+                type: "BlockStatement",
+                body: [
+                    {
+                        type: "ReturnStatement",
+                        argument: node.body
+                    }
+                ]
+            },
+            generator: false,
+            expression: false,
+            async: node.async === true
+        };
+
+        if (!containsThisExpression(fn.body)) {
+            return fn;
+        }
+
+        return {
+            type: "CallExpression",
+            callee: {
+                type: "MemberExpression",
+                object: fn,
+                property: { type: "Identifier", name: "bind" },
+                computed: false
+            },
+            arguments: [
+                { type: "ThisExpression" }
+            ]
+        };
+    }
+
+    /**
+     * Lower class fields/private fields to older ESTree nodes that escodegen
+     * and the classic passes can handle.
+     * @param {ClassDeclaration} node
+     * @return {Node}
+     */
+    simplifyClassDeclaration (node) {
+        assert.ok(estest.isNode(node));
+
+        var className = node.id && node.id.name || `$$class$${this.rngAlpha.get()}`;
+        var privateStores = {};
+        var instanceInitializers = [];
+        var staticAssignments = [];
+        var methods = [];
+
+        node.body.body.forEach(element => {
+            if (element.type != "PropertyDefinition" && element.type != "FieldDefinition") {
+                methods.push(element);
+                return;
+            }
+
+            if (element.key.type == "PrivateIdentifier") {
+                var storeName = privateStoreName(className, element.key.name);
+                privateStores[element.key.name] = storeName;
+                if (element.static) {
+                    staticAssignments.push(weakMapSetStatement(
+                        storeName,
+                        { type: "Identifier", name: className },
+                        element.value
+                    ));
+                } else {
+                    instanceInitializers.push(weakMapSetStatement(
+                        storeName,
+                        { type: "ThisExpression" },
+                        element.value
+                    ));
+                }
+                return;
+            }
+
+            var target = {
+                type: "MemberExpression",
+                object: element.static ? { type: "Identifier", name: className } : { type: "ThisExpression" },
+                property: classFieldKey(element),
+                computed: element.computed === true || element.key.type == "Literal"
+            };
+            if (element.static) {
+                staticAssignments.push(assignmentStatement(target, element.value));
+            } else {
+                instanceInitializers.push(assignmentStatement(target, element.value));
+            }
+        });
+
+        methods.forEach(method => {
+            this.lowerPrivateMembers(method, privateStores);
+        });
+
+        if (instanceInitializers.length > 0) {
+            var constructor = methods.find(isConstructorMethod);
+            if (!constructor) {
+                constructor = {
+                    type: "MethodDefinition",
+                    key: { type: "Identifier", name: "constructor" },
+                    computed: false,
+                    value: {
+                        type: "FunctionExpression",
+                        id: null,
+                        params: [],
+                        body: {
+                            type: "BlockStatement",
+                            body: node.superClass ? [
+                                {
+                                    type: "ExpressionStatement",
+                                    expression: {
+                                        type: "CallExpression",
+                                        callee: { type: "Super" },
+                                        arguments: []
+                                    }
+                                }
+                            ] : []
+                        },
+                        generator: false,
+                        expression: false,
+                        async: false
+                    },
+                    kind: "constructor",
+                    static: false
+                };
+                methods.unshift(constructor);
+            }
+
+            var body = constructor.value.body.body;
+            var insertAt = 0;
+            if (node.superClass) {
+                var superIndex = body.findIndex(stmt => stmt.type == "ExpressionStatement"
+                    && stmt.expression.type == "CallExpression"
+                    && stmt.expression.callee.type == "Super");
+                insertAt = superIndex == -1 ? 0 : superIndex + 1;
+            }
+            body.splice.apply(body, [insertAt, 0].concat(instanceInitializers));
+        }
+
+        node.body.body = methods;
+
+        var privateDeclarations = Object.keys(privateStores).map(name => {
+            return {
+                type: "VariableDeclaration",
+                kind: "var",
+                declarations: [
+                    {
+                        type: "VariableDeclarator",
+                        id: { type: "Identifier", name: privateStores[name] },
+                        init: {
+                            type: "NewExpression",
+                            callee: { type: "Identifier", name: "WeakMap" },
+                            arguments: []
+                        }
+                    }
+                ]
+            };
+        });
+
+        if (privateDeclarations.length == 0 && staticAssignments.length == 0) {
+            return node;
+        }
+
+        return {
+            type: "BlockStatement",
+            body: privateDeclarations.concat([node]).concat(staticAssignments)
+        };
+    }
+
+    lowerPrivateMembers (node, privateStores) {
+        traverser.traverse(node, [], (child, stack) => {
+            var parentFrame = stack[1];
+            if (child.type == "MemberExpression"
+                && parentFrame
+                && parentFrame.node.type == "AssignmentExpression"
+                && parentFrame.key == "left") {
+                return child;
+            }
+            if (child.type == "AssignmentExpression"
+                && child.left.type == "MemberExpression"
+                && child.left.property.type == "PrivateIdentifier"
+                && privateStores[child.left.property.name]) {
+                return {
+                    type: "CallExpression",
+                    callee: {
+                        type: "MemberExpression",
+                        object: { type: "Identifier", name: privateStores[child.left.property.name] },
+                        property: { type: "Identifier", name: "set" },
+                        computed: false
+                    },
+                    arguments: [
+                        child.left.object,
+                        child.right
+                    ]
+                };
+            }
+            if (child.type == "MemberExpression"
+                && child.property.type == "PrivateIdentifier"
+                && privateStores[child.property.name]) {
+                return weakMapGetExpression(privateStores[child.property.name], child.object);
+            }
+            return child;
+        });
     }
 
 };

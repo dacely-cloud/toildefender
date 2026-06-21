@@ -25,6 +25,10 @@ function objectKey(prop) {
     return prop.key.name || prop.key.value;
 }
 
+function canPackObjectExpression(node) {
+    return node.properties.every(prop => prop.type != "SpreadElement" && prop.key);
+}
+
 function isBigIntLiteral(node) {
     return node.type == "Literal" && typeof node.value == "bigint";
 }
@@ -88,6 +92,9 @@ module.exports = class Identifiers {
                 if (options.objectPacking === false) {
                     return node;
                 }
+                if (!canPackObjectExpression(node)) {
+                    return node;
+                }
 
                 var salt = utils.random(1, 65535);
                 var schema = [ salt, node.properties.length ];
@@ -103,6 +110,7 @@ module.exports = class Identifiers {
                     type: "CallExpression",
                     callee: { type: "Identifier", name: "veilmark$toObject"  },
                     arguments: [
+                        literal(String(utils.hash(schema.join(",")))),
                         {
                             type: "ArrayExpression",
                             elements: schema.map(literal)
