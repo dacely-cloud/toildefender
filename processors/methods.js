@@ -158,6 +158,10 @@ function renameFunctionExpressionSelfReferences(node, name) {
     });
 }
 
+function isClassMethodFunction(stack) {
+    return stack.some(frame => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+}
+
 /**
  * Get index of argument in function.
  * @param {Function} method Function
@@ -264,7 +268,7 @@ module.exports = class Methods {
         traverser.traverse(ast, [], (node, stack) => {
             if (node.type == "FunctionDeclaration") { // Statement
                 methods.push(functionDeclarationName(node));
-            } else if (node.type == "FunctionExpression") { // Expression
+            } else if (node.type == "FunctionExpression" && !isClassMethodFunction(stack)) { // Expression
                 methods.push(anonymousMethodName(node));
             }
             
@@ -289,7 +293,7 @@ module.exports = class Methods {
                 functionDeclarationName(node);
                 methods.push(node);
                 return { type: "ExpressionStatement", expression: createMethodStub(node.id) }; // This is not ideal
-            } else if (node.type == "FunctionExpression") { // Expression
+            } else if (node.type == "FunctionExpression" && !isClassMethodFunction(stack)) { // Expression
                 var id = anonymousMethodName(node);
                 renameFunctionExpressionSelfReferences(node, id);
                 // Merge into old object instead of creating a new one to preserve object references

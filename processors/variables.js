@@ -66,6 +66,17 @@ function functionExpressionUsesOwnName(node) {
     return used;
 }
 
+function isClassMethodScope(scope) {
+    var node = scope && scope.block;
+    while (node) {
+        if (node.type == "MethodDefinition" || node.type == "ClassBody") {
+            return true;
+        }
+        node = node.veilmark$parent;
+    }
+    return false;
+}
+
 module.exports = class Variables {
 
     constructor (logger) {
@@ -103,6 +114,9 @@ module.exports = class Variables {
         this.esutils.setParentsRecursive(ast);
         
         scopeManager.scopes.forEach(scope => {
+            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope)) {
+                return;
+            }
             scope.variables.forEach(variable => {
                 variable.defs.forEach(def => {
                     if (def.type == "FunctionName") {
@@ -150,6 +164,9 @@ module.exports = class Variables {
      */
     obfuscateIdentifiers (ast, scopeManager) {
         scopeManager.scopes.forEach(scope => {
+            if (isClassMethodScope(scope)) {
+                return;
+            }
             if (scope.isStatic()) {
                 scope.variables.sort((a, b) => {
                     if (a.tainted) {
@@ -163,6 +180,10 @@ module.exports = class Variables {
 
                 for (let variable of scope.variables) {
                     var name = "$$var$" + utils.hash(variable) + "$" + variable.name;
+
+                    if (variable.defs.some(def => def.type == "ClassName")) {
+                        continue;
+                    }
 
                     if (variable.tainted) {
                         continue;
@@ -215,6 +236,9 @@ module.exports = class Variables {
         var rng = new utils.UniqueRandomAlpha(3);
         
         scopeManager.scopes.forEach(scope => {
+            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope)) {
+                return;
+            }
             scope.variables.forEach(variable => {
                 variable.defs.forEach(def => {
                     if (def.type == "Parameter") {

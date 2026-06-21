@@ -32,12 +32,22 @@ module.exports = function (logger) {
         });
     };
 
+    this.canInsertIntoScope = function (scope) {
+        if (!scope || !scope.block) {
+            return false;
+        }
+        if (scope.block.body && (scope.block.body.type == "Program" || scope.block.body.type == "BlockStatement")) {
+            return true;
+        }
+        return scope.block.type == "Program" || scope.block.type == "BlockStatement";
+    };
+
     this.insertIntoScope = function (scope, node, idx) {
         assert.ok(estest.isNode(node));
         
         idx = idx || 0;
 
-        if (scope.block.body.type == "Program" || scope.block.body.type == "BlockStatement") {
+        if (scope.block.body && (scope.block.body.type == "Program" || scope.block.body.type == "BlockStatement")) {
             scope.block.body.body.splice(idx, 0, node);
             
             Object.defineProperty(node, "veilmark$parent", {

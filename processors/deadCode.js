@@ -9,6 +9,10 @@ var utils = require("../utils");
 
 const KEYWORDS = ["await","break","case","catch","class","const","continue","debugger","default","delete","do","else","enum","export","extends","finally","for","function","if","implements","import","in","instanceof","interface","let","new","package","private","protected","public","return","static","super","switch","this","throw","try","typeof","var","void","while","with","yield"];
 
+function isClassMethodBody(stack) {
+    return stack.some(frame => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+}
+
 module.exports = class DeadCode {
 
     constructor (logger) {
@@ -26,7 +30,7 @@ module.exports = class DeadCode {
         var rngAlpha = new utils.UniqueRandomAlpha(3);
 
         return traverser.traverse(ast, [], (node, stack) => {
-            if (node.type == "BlockStatement") {
+            if (node.type == "BlockStatement" && !isClassMethodBody(stack)) {
                 for (var i = 0; i < probability; ++i) {
                     if (probability - i < Math.random()) {
                         continue;

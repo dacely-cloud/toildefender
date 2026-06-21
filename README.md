@@ -420,6 +420,12 @@ async and generator functions for ToilDefender's async/generator dispatchers.
 This avoids the large regenerator helper path for modern browser and Node
 bundles.
 
+The `babel: false` path supports a growing native AST subset, including plain
+classes as native islands, arrows, for-of loops, async/generator functions, and
+simple spread calls. Syntax that Esprima cannot parse yet, such as class fields,
+private fields, optional chaining, nullish coalescing, and object rest/spread,
+still needs the Babel normalization path until the parser front end is replaced.
+
 ## Toil Integration
 
 ToilDefender is intended to sit behind Toil build tooling. Framework packages

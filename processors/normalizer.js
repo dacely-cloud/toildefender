@@ -182,6 +182,8 @@ module.exports = class Normalizer {
                     return this.simplifyForStatement(node);
                 case "ForInStatement":
                     return this.simplifyForStatement(this.simplifyForInStatement(node));
+                case "ForOfStatement":
+                    return this.simplifyForOfStatement(node);
                 /*case "SwitchStatement":
                     return this.simplifySwitchStatement(node);*/
                 case "TryStatement":
@@ -402,6 +404,93 @@ module.exports = class Normalizer {
             }
         };
         return forStmt;
+    }
+
+    /**
+     * Simplify ForOfStatement to an index-based ForStatement.
+     * @param {ForOfStatement} node
+     * @return {Node}
+     */
+    simplifyForOfStatement (node) {
+        assert.ok(estest.isNode(node));
+
+        var valuesName = `$$forof$values$${this.rngAlpha.get()}`, iterName = `$$forof$iter$${this.rngAlpha.get()}`;
+        var valueAtIndex = {
+            type: "MemberExpression",
+            object: { type: "Identifier", name: valuesName },
+            property: { type: "Identifier", name: iterName },
+            computed: true
+        };
+        var assignValue = node.left.type == "VariableDeclaration"
+        ?
+        {
+            type: "VariableDeclaration",
+            kind: node.left.kind == "const" ? "let" : node.left.kind,
+            declarations: [
+                {
+                    type: "VariableDeclarator",
+                    id: node.left.declarations[0].id,
+                    init: valueAtIndex
+                }
+            ]
+        }
+        :
+        {
+            type: "ExpressionStatement",
+            expression: {
+                type: "AssignmentExpression",
+                operator: "=",
+                left: node.left,
+                right: valueAtIndex
+            }
+        };
+
+        return {
+            type: "BlockStatement",
+            body: [
+                {
+                    type: "VariableDeclaration",
+                    kind: "var",
+                    declarations: [
+                        {
+                            type: "VariableDeclarator",
+                            id: { type: "Identifier", name: valuesName },
+                            init: node.right
+                        },
+                        {
+                            type: "VariableDeclarator",
+                            id: { type: "Identifier", name: iterName },
+                            init: { type: "Literal", value: 0 }
+                        }
+                    ]
+                },
+                {
+                    type: "ForStatement",
+                    init: null,
+                    test: {
+                        type: "BinaryExpression",
+                        operator: "<",
+                        left: { type: "Identifier", name: iterName },
+                        right: {
+                            type: "MemberExpression",
+                            object: { type: "Identifier", name: valuesName },
+                            property: { type: "Identifier", name: "length" },
+                            computed: false
+                        }
+                    },
+                    update: {
+                        type: "UpdateExpression",
+                        operator: "++",
+                        argument: { type: "Identifier", name: iterName },
+                        prefix: false
+                    },
+                    body: {
+                        type: "BlockStatement",
+                        body: [assignValue].concat(blockToArray(node.body))
+                    }
+                }
+            ]
+        };
     }
 
     /**

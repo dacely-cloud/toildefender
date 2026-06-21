@@ -9,6 +9,21 @@ var ESUtils = require("../esutils");
 var traverser = require("../traverser");
 var utils = require("../utils");
 
+function isClassMethodFunction(stack) {
+    return stack.some(frame => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+}
+
+function isClassMethodScope(scope) {
+    var node = scope && scope.block;
+    while (node) {
+        if (node.type == "MethodDefinition" || node.type == "ClassBody") {
+            return true;
+        }
+        node = node.veilmark$parent;
+    }
+    return false;
+}
+
 module.exports = class Scopes {
 
     constructor (logger) {
@@ -33,6 +48,9 @@ module.exports = class Scopes {
         var scopes = scopeManager.acquireAll(ast);
         var rngAlpha = new utils.UniqueRandomAlpha(3);
         scopeManager.scopes.forEach(scope => {
+            if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope)) {
+                return;
+            }
             var scopeVarName = `$$scope$${rngAlpha.get()}`;
             
             var counter = 0;
@@ -151,6 +169,10 @@ module.exports = class Scopes {
             
             traverser.traverse(scope.block, [], (node, stack) => {
                 if (scope.block == node) {
+                    return node;
+                }
+
+                if (isClassMethodFunction(stack)) {
                     return node;
                 }
                 

@@ -128,8 +128,8 @@ function defendHashMeshCode(code, hashMesh = {}) {
     });
 }
 
-function assertSameRuntimeResult(code) {
-    const defended = defendCode(code);
+function assertSameRuntimeResult(code, options) {
+    const defended = defendCode(code, options);
     assert.equal(defended.includes("$$defend"), false);
     assert.equal(defended.includes("defendjs"), false);
     assert.deepEqual(run(defended), run(code));
@@ -295,6 +295,29 @@ test("lowers spread append calls without relying on Babel", () => {
 
     assert.equal(defended.includes("..."), false);
     assert.deepEqual(run(defended), run(code));
+});
+
+test("supports common modern AST islands without Babel", () => {
+    assertSameRuntimeResult(`
+        class Box {
+            constructor(value) {
+                this.value = value;
+            }
+            read() {
+                const pick = () => this.value + 1;
+                return pick();
+            }
+        }
+
+        const rows = [];
+        for (const value of [1, 2, 3]) {
+            rows.push(new Box(value).read());
+        }
+
+        globalThis.__result = rows;
+    `, {
+        babel: false
+    });
 });
 
 test("control-flow flattener emits declared tobethrown sentinel", () => {
