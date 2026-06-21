@@ -97,6 +97,9 @@ function isRenamableVariable(scope, variable) {
     if (scope.type == "global") {
         return false;
     }
+    if (typeof variable.name == "string" && variable.name.indexOf("veilmark$anon$") === 0) {
+        return false;
+    }
     if (VM_RUNTIME_NAMES.has(variable.name)) {
         return false;
     }
