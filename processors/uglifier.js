@@ -81,11 +81,27 @@ function shortName(index) {
     return name;
 }
 
-function isRenamableVariable(scope, variable) {
+function collectUnresolvedNames(scopeManager) {
+    var names = new Set();
+    scopeManager.scopes.forEach(scope => {
+        scope.through.forEach(reference => {
+            if (!reference.resolved) {
+                names.add(reference.identifier.name);
+            }
+        });
+    });
+    return names;
+}
+
+function isRenamableVariable(scope, variable, unresolvedNames) {
     if (scope.type == "global") {
         return false;
     }
-    if (typeof variable.name == "string" && variable.name.indexOf("veilmark$anon$") === 0) {
+    if (
+        typeof variable.name == "string"
+        && variable.name.indexOf("veilmark$anon$") === 0
+        && unresolvedNames.has(variable.name)
+    ) {
         return false;
     }
     if (variable.name == "arguments" || variable.name == "undefined") {
@@ -164,10 +180,11 @@ function modernMangle(ast) {
         sourceType: "script"
     });
 
+    var unresolvedNames = collectUnresolvedNames(scopeManager);
     var variables = [];
     scopeManager.scopes.forEach(scope => {
         scope.variables.forEach(variable => {
-            if (isRenamableVariable(scope, variable)) {
+            if (isRenamableVariable(scope, variable, unresolvedNames)) {
                 variables.push({ scope: scope, variable: variable });
             }
         });
