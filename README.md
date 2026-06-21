@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./images/toildefender4.svg" alt="ToilDefender" width="600" />
+<img src="./images/toildefender5.svg" alt="ToilDefender" width="600" />
 
 
 ### JavaScript code protection for the Toil stack.
