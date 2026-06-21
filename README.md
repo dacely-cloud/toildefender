@@ -99,6 +99,10 @@ the bytecode into encrypted BigInt streams, and executes it through a generated
 runtime VM. Instead of exposing readable JavaScript logic, your code becomes
 numeric program data consumed by a randomized virtual machine.
 
+The compiler also fuses selected hot stack patterns into semantic
+superinstructions, so common operation boundaries such as constant-key property
+reads are not always emitted as separate primitive VM opcodes.
+
 Original logic disappears from the output bundle. Attackers no longer reverse
 plain JavaScript; they must recover the VM, decode the bytecode format,
 reconstruct the instruction set, and emulate the protected program.
@@ -195,7 +199,7 @@ protections: {
 
 The complete beautified generated output is committed at
 [docs/all-modes-output.demo.js](./docs/all-modes-output.demo.js). It is a real
-961-line artifact from the current generator and executes to:
+982-line artifact from the current generator and executes to:
 
 Output excerpt:
 
@@ -207,7 +211,7 @@ Output excerpt:
     var c = arguments;
     while (true) try {
       switch (f) {
-        case 8455:
+        case 27088:
           b[11] = c[11];
           b[12] = c[10];
           b[13] = c[9];
@@ -218,20 +222,20 @@ Output excerpt:
           b[18] = c[4];
           b[19] = c[3];
           b[20] = c[2];
-          b[21] = e(a, 739, b, c[1]);
-          b[22] = e(a, 22884, b, c[1]);
-          b[23] = e(a, 24756, b, c[1]);
-          b[24] = e(a, 11593, b, c[1]);
-          b[25] = e(a, 5522, b, c[1]);
-          b[26] = e(a, 21472, b, c[1]);
-          b[27] = e(a, 16279, b, c[1]);
-          b[28] = e(a, 17195, b, c[1]);
-          b[29] = e(a, 27528, b, c[1]);
-          b[30] = e(a, 23881, b, c[1]);
-          b[31] = e(a, 14569, b, c[1]);
-          b[32] = e(a, 21646, b, c[1]);
-          b[33] = e(a, 2482, b, c[1]);
-          b[34] = e(a, 15554, b, c[1]);
+          b[21] = e(a, 1207, b, c[1]);
+          b[22] = e(a, 1592, b, c[1]);
+          b[23] = e(a, 32627, b, c[1]);
+          b[24] = e(a, 30059, b, c[1]);
+          b[25] = e(a, 5790, b, c[1]);
+          b[26] = e(a, 6222, b, c[1]);
+          b[27] = e(a, 13893, b, c[1]);
+          b[28] = e(a, 1517, b, c[1]);
+          b[29] = e(a, 24009, b, c[1]);
+          b[30] = e(a, 2821, b, c[1]);
+          b[31] = e(a, 2816, b, c[1]);
+          b[32] = e(a, 11532, b, c[1]);
+          b[33] = e(a, 12484, b, c[1]);
+          b[34] = e(a, 23694, b, c[1]);
           b[35] = BigInt(b[19]);
           b[36] = [1n];
           b[37] = c[1][10][1];
@@ -263,18 +267,20 @@ Output excerpt:
           /* 900+ more generated lines:
              dispatcher cases, encoded literals, streaming VM token reads,
              seed-selected stack/local storage, BigInt program blobs,
-             randomized opcode tables, and Hash-Mesh unwrap */
+             semantic superinstructions, randomized opcode tables,
+             and Hash-Mesh unwrap */
 
-        case 11593:
+        case 30059:
           if (c[1][49] < c[2][10][1] || c[1][49] >= c[1][18]) throw new Error(c[2][10][45]);
           b[1] = c[1][30](c[1][49]);
           c[1][49] += c[2][10][5];
           return b[1];
-        case 5206:
+        case 29157:
           b[1] = '';
-          b[1] += d(86, 101);
-          b[1] += d(105, 108, 109);
-          b[1] += d(97, 114, 107);
+          b[1] += d(86);
+          b[1] += d(101, 105, 108, 109);
+          b[1] += d(97, 114);
+          b[1] += d(107);
           return b[1];
       }
     } catch (a) {
@@ -285,7 +291,7 @@ Output excerpt:
       }
     }
   }
-  a(17701, {});
+  a(10301, {});
 })();
 ```
 

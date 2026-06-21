@@ -292,6 +292,8 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         if (op === ops[41]) { push(argsLike); continue; }
         if (op === ops[42]) { push(typeof pop()); continue; }
         if (op === ops[43]) { var mc = readUnsigned(); var ma = popArgs(mc); var mk = pop(); var mo = pop(); push(mo[mk].apply(mo, ma)); continue; }
+        if (op === ops[44]) { var cgpKey = constants[readUnsigned()]; var cgpObj = pop(); push(cgpObj[cgpKey]); continue; }
+        if (op === ops[45]) { storeLocal(readUnsigned(), pop()); continue; }
         throw new Error("invalid virtual opcode");
     }
 }
@@ -304,7 +306,7 @@ var OP_NAMES = [
     "STRICT_EQ", "STRICT_NEQ", "LT", "LTE", "GT", "GTE", "JMP", "JMP_FALSE",
     "JMP_TRUE", "CALL_EXT", "CALL_LOCAL", "GET_PROP", "SET_PROP", "MAKE_ARRAY",
     "MAKE_OBJECT", "RETURN", "THROW", "PUSH_THIS", "PUSH_ARGUMENTS", "TYPEOF",
-    "CALL_METHOD"
+    "CALL_METHOD", "GET_CONST_PROP", "STORE_LOCAL_POP"
 ];
 
 var BASES = [257, 263, 269, 521, 1031, 4099, 65537];
@@ -833,6 +835,29 @@ Compiler.prototype.instructionSize = function (instr, positions) {
     }
     return size;
 };
+Compiler.prototype.isInstruction = function (instr, op) {
+    return instr && !instr.label && instr.op === op;
+};
+Compiler.prototype.fuseSuperinstructions = function () {
+    var out = [];
+    for (var i = 0; i < this.instructions.length; i += 1) {
+        var one = this.instructions[i];
+        var two = this.instructions[i + 1];
+        var three = this.instructions[i + 2];
+        if (this.isInstruction(one, "PUSH_CONST") && this.isInstruction(two, "GET_PROP")) {
+            out.push({ op: "GET_CONST_PROP", args: [one.args[0]] });
+            i += 1;
+            continue;
+        }
+        if (this.isInstruction(one, "DUP") && this.isInstruction(two, "STORE_LOCAL") && this.isInstruction(three, "POP")) {
+            out.push({ op: "STORE_LOCAL_POP", args: [two.args[0]] });
+            i += 2;
+            continue;
+        }
+        out.push(one);
+    }
+    this.instructions = out;
+};
 Compiler.prototype.assemble = function () {
     var positions = new Map();
     var stable = false;
@@ -897,6 +922,7 @@ Compiler.prototype.constantExpression = function (constant) {
     throw new Error("unsupported constant " + constant.kind);
 };
 Compiler.prototype.finish = function () {
+    this.fuseSuperinstructions();
     var tokens = this.assemble();
     var encrypted = encryptedStream(tokens, this.dialect.base, this.dialect.seed);
     var opValues = OP_NAMES.map(name => this.dialect.opcodes[name]);

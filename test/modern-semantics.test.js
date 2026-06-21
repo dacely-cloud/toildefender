@@ -295,6 +295,40 @@ test("virtual machine runtime streams bytecode instead of materializing decoded 
     assert.deepEqual(run(defended), run(code));
 });
 
+test("virtual machine protection emits fused superinstructions", () => {
+    const code = `
+        function read(input) {
+            var total = input.length;
+            total = total + input.value;
+            return input.nested.score + total;
+        }
+        globalThis.__result = read({
+            length: 2,
+            value: 5,
+            nested: { score: 7 }
+        });
+    `;
+    const defended = defendVmCode(code);
+    const getConstProp = /if \(op === ops\[44\]\) \{[\s\S]*?continue;\n        \}/;
+    const storeLocalPop = /if \(op === ops\[45\]\) \{[\s\S]*?continue;\n        \}/;
+    const brokenGetConstProp = defended.replace(
+        getConstProp,
+        "if (op === ops[44]) { throw new Error('fused get const prop'); }"
+    );
+    const brokenStoreLocalPop = defended.replace(
+        storeLocalPop,
+        "if (op === ops[45]) { throw new Error('fused store local pop'); }"
+    );
+
+    assert.match(defended, getConstProp);
+    assert.match(defended, storeLocalPop);
+    assert.notEqual(brokenGetConstProp, defended);
+    assert.notEqual(brokenStoreLocalPop, defended);
+    assert.deepEqual(run(defended), run(code));
+    assert.throws(() => run(brokenGetConstProp), /fused get const prop/);
+    assert.throws(() => run(brokenStoreLocalPop), /fused store local pop/);
+});
+
 test("virtual machine protection preserves loops, method calls, arrays, and objects", () => {
     const code = `
         function check(input) {
