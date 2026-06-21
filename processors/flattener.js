@@ -221,6 +221,17 @@ module.exports = class Flattener {
                         type: "BlockStatement",
                         body: [
                             {
+                                type: "VariableDeclaration",
+                                kind: "var",
+                                declarations: [
+                                    {
+                                        type: "VariableDeclarator",
+                                        id: { type: "Identifier", name: "veilmark$tobethrown" },
+                                        init: null
+                                    }
+                                ]
+                            },
+                            {
                                 type: "WhileStatement",
                                 test: { type: "Literal", value: true },
                                 body: this.getCases(entry, exit)

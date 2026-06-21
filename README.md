@@ -201,19 +201,20 @@ protections: {
 
 The complete beautified generated output is committed at
 [docs/all-modes-output.demo.js](./docs/all-modes-output.demo.js). It is a real
-1015-line artifact from the current generator and executes to:
+1019-line artifact from the current generator and executes to:
 
 Output excerpt:
 
 ```js
 (function () {
-  function a(f, j) {
-    var b = new Array(105);
+  function a(f, k) {
+    var b = new Array(109);
     ;
     var c = arguments;
+    var i;
     while (true) try {
       switch (f) {
-        case 18274:
+        case 24210:
           b[11] = c[11];
           b[12] = c[10];
           b[13] = c[9];
@@ -224,21 +225,21 @@ Output excerpt:
           b[18] = c[4];
           b[19] = c[3];
           b[20] = c[2];
-          b[21] = e(a, 22, b, c[1]);
-          b[22] = e(a, 13455, b, c[1]);
-          b[23] = e(a, 23551, b, c[1]);
-          b[24] = e(a, 5304, b, c[1]);
-          b[25] = e(a, 14518, b, c[1]);
-          b[26] = e(a, 16031, b, c[1]);
-          b[27] = e(a, 12999, b, c[1]);
-          b[28] = e(a, 3096, b, c[1]);
-          b[29] = e(a, 12237, b, c[1]);
-          b[30] = e(a, 20218, b, c[1]);
-          b[31] = e(a, 21222, b, c[1]);
-          b[32] = e(a, 29854, b, c[1]);
-          b[33] = e(a, 612, b, c[1]);
-          b[34] = e(a, 18182, b, c[1]);
-          b[35] = e(a, 9881, b, c[1]);
+          b[21] = e(a, 16503, b, c[1]);
+          b[22] = e(a, 16827, b, c[1]);
+          b[23] = e(a, 28881, b, c[1]);
+          b[24] = e(a, 27718, b, c[1]);
+          b[25] = e(a, 26046, b, c[1]);
+          b[26] = e(a, 11984, b, c[1]);
+          b[27] = e(a, 10989, b, c[1]);
+          b[28] = e(a, 10700, b, c[1]);
+          b[29] = e(a, 18606, b, c[1]);
+          b[30] = e(a, 22347, b, c[1]);
+          b[31] = e(a, 28683, b, c[1]);
+          b[32] = e(a, 11069, b, c[1]);
+          b[33] = e(a, 8443, b, c[1]);
+          b[34] = e(a, 27840, b, c[1]);
+          b[35] = e(a, 21656, b, c[1]);
           b[36] = BigInt(b[19]);
           b[37] = [1n];
           b[38] = c[1][10][1];
@@ -273,12 +274,12 @@ Output excerpt:
              semantic superinstructions, randomized opcode tables,
              and Hash-Mesh unwrap */
 
-        case 5304:
-          if (c[1][49] < c[2][10][1] || c[1][49] >= c[1][18]) throw new Error(c[2][10][45]);
-          b[1] = c[1][30](c[1][49]);
-          c[1][49] += c[2][10][5];
+        case 27718:
+          if (c[1][50] < c[2][10][1] || c[1][50] >= c[1][18]) throw new Error(c[2][10][46]);
+          b[1] = c[1][31](c[1][50]);
+          c[1][50] += c[2][10][5];
           return b[1];
-        case 1762:
+        case 30063:
           b[1] = '';
           b[1] += d(86, 101, 105);
           b[1] += d(108, 109);
@@ -286,14 +287,14 @@ Output excerpt:
           return b[1];
       }
     } catch (a) {
-      veilmark$tobethrown = null;
+      i = null;
       switch (f) {
         default:
           throw a;
       }
     }
   }
-  a(15312, {});
+  a(20498, {});
 })();
 ```
 

@@ -57,6 +57,10 @@ function run(code) {
     return JSON.parse(JSON.stringify(context.__result));
 }
 
+function runStrict(code) {
+    return run(`"use strict";\n${code}`);
+}
+
 function defendCode(code) {
     const result = toildefender.do({
         code,
@@ -117,6 +121,33 @@ function assertSameRuntimeResult(code) {
     assert.deepEqual(run(defended), run(code));
 }
 
+test("control-flow flattening declares throw sentinel for strict module output", () => {
+    const code = `
+        try {
+            throw new Error("module-strict-sentinel");
+        } catch (error) {
+            globalThis.__result = {
+                message: error.message,
+                name: error.name
+            };
+        }
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: true,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.match(defended, /veilmark\$tobethrown/);
+    assert.deepEqual(runStrict(defended), run(code));
+});
+
 test("preserves optional chaining and nullish coalescing semantics", () => {
     assertSameRuntimeResult(`
         const rows = [
@@ -161,6 +192,41 @@ test("preserves try/finally return behavior", () => {
         }
         globalThis.__result = [probe(1), probe(4), globalThis.side];
     `);
+});
+
+test("control-flow flattener emits declared tobethrown sentinel", () => {
+    const code = `
+        function probe() {
+            try {
+                throw new Error("caught");
+            } catch (error) {
+                return error.message;
+            }
+        }
+        globalThis.__result = probe();
+    `;
+    const defended = defendInspectableCode(code, {
+        dead_code: false,
+        scope: true,
+        control_flow: true,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    });
+
+    assert.match(defended, /var veilmark\$tobethrown(?: = null)?/);
+    assert.deepEqual(runStrict(`${defended}
+        globalThis.__result = {
+            value: globalThis.__result,
+            leaked: Object.prototype.hasOwnProperty.call(globalThis, "veilmark$tobethrown")
+        };
+    `), {
+        value: run(code),
+        leaked: false
+    });
 });
 
 test("preserves uncurried prototype method receivers", () => {
