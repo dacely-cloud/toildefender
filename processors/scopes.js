@@ -132,6 +132,9 @@ module.exports = class Scopes {
                             });
                         });
                     } else if (def.type == "FunctionName") {
+                        if (def.node.type == "FunctionExpression") {
+                            return;
+                        }
                         variable.references.forEach(reference => {
                             this.esutils.replaceNode(scope.block, reference.identifier, {
                                 type: "CallExpression",

@@ -43,18 +43,31 @@ const VM_FEATURES = {
 };
 
 function run(code) {
+    const context = createRunContext();
+    vm.runInContext(code, context, { timeout: 1_000 });
+    return JSON.parse(JSON.stringify(context.__result));
+}
+
+async function runAsync(code) {
+    const context = createRunContext();
+    vm.runInContext(code, context, { timeout: 1_000 });
+    await new Promise((resolve) => setImmediate(resolve));
+    return JSON.parse(JSON.stringify(context.__result));
+}
+
+function createRunContext() {
     const context = vm.createContext({
         console,
         globalThis: {},
         window: {},
         setTimeout,
         clearTimeout,
+        setImmediate,
         Promise
     });
     context.globalThis = context;
     context.window = context;
-    vm.runInContext(code, context, { timeout: 1_000 });
-    return JSON.parse(JSON.stringify(context.__result));
+    return context;
 }
 
 function runStrict(code) {
@@ -119,6 +132,13 @@ function assertSameRuntimeResult(code) {
     assert.equal(defended.includes("$$defend"), false);
     assert.equal(defended.includes("defendjs"), false);
     assert.deepEqual(run(defended), run(code));
+}
+
+async function assertSameAsyncRuntimeResult(code) {
+    const defended = defendCode(code);
+    assert.equal(defended.includes("$$defend"), false);
+    assert.equal(defended.includes("defendjs"), false);
+    assert.deepEqual(await runAsync(defended), await runAsync(code));
 }
 
 test("control-flow flattening declares throw sentinel for strict module output", () => {
@@ -194,6 +214,37 @@ test("preserves try/finally return behavior", () => {
     `);
 });
 
+test("preserves try/finally break and continue behavior", () => {
+    assertSameRuntimeResult(`
+        const events = [];
+        let i = 0;
+        while (i < 4) {
+            try {
+                i++;
+                if (i === 1) continue;
+                if (i === 3) break;
+                events.push("body:" + i);
+            } finally {
+                events.push("finally:" + i);
+            }
+        }
+        events.push("after:" + i);
+        globalThis.__result = events;
+    `);
+});
+
+test("preserves Babel async regenerator callee bindings", async () => {
+    await assertSameAsyncRuntimeResult(`
+        async function load(value) {
+            const next = await Promise.resolve(value + 2);
+            return next * 3;
+        }
+        load(4).then((value) => {
+            globalThis.__result = value;
+        });
+    `);
+});
+
 test("control-flow flattener emits declared tobethrown sentinel", () => {
     const code = `
         function probe() {
@@ -227,6 +278,18 @@ test("control-flow flattener emits declared tobethrown sentinel", () => {
         value: run(code),
         leaked: false
     });
+});
+
+test("preserves named function expression self references", () => {
+    assertSameRuntimeResult(`
+        function use(fn) {
+            return fn();
+        }
+        const value = use(function _callee() {
+            return typeof _callee;
+        });
+        globalThis.__result = value;
+    `);
 });
 
 test("preserves uncurried prototype method receivers", () => {

@@ -51,6 +51,58 @@ function blockToArray (node) {
     }
 }
 
+function isLoopOrSwitch(node) {
+    return node.type == "WhileStatement"
+        || node.type == "DoWhileStatement"
+        || node.type == "ForStatement"
+        || node.type == "ForInStatement"
+        || node.type == "ForOfStatement"
+        || node.type == "SwitchStatement";
+}
+
+function exitsCurrentTry(node, stack) {
+    if (node.type == "ReturnStatement") {
+        return true;
+    }
+
+    if (node.type == "BreakStatement" || node.type == "ContinueStatement") {
+        return !stack.some(frame => isLoopOrSwitch(frame.node));
+    }
+
+    return false;
+}
+
+function withFinalizerBefore(node, finalizer) {
+    var body = [];
+
+    if (node.type == "ReturnStatement") {
+        body.push({
+            type: "VariableDeclaration",
+            kind: "var",
+            declarations: [
+                {
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: "veilmark$return" },
+                    init: node.argument
+                }
+            ]
+        });
+        body.push(utils.cloneISwearIKnowWhatImDoing(finalizer));
+        body.push({
+            type: "ReturnStatement",
+            argument: { type: "Identifier", name: "veilmark$return" }
+        });
+    } else {
+        body.push(utils.cloneISwearIKnowWhatImDoing(finalizer));
+        body.push(node);
+    }
+
+    return {
+        type: "BlockStatement",
+        body: body
+    };
+}
+
 module.exports = class Normalizer {
 
     constructor (logger) {
@@ -416,28 +468,8 @@ module.exports = class Normalizer {
                     if (stack.some(x => estest.isFunction(x.node))) {
                         this.abort();
                         return node;
-                    } else if (node.type == "ReturnStatement") {
-                        return {
-                            type: "BlockStatement",
-                            body: [
-                                {
-                                    type: "VariableDeclaration",
-                                    kind: "var",
-                                    declarations: [
-                                        {
-                                            type: "VariableDeclarator",
-                                            id: { type: "Identifier", name: "veilmark$return" },
-                                            init: node.argument
-                                        }
-                                    ]
-                                },
-                                utils.cloneISwearIKnowWhatImDoing(finalizer),
-                                {
-                                    type: "ReturnStatement",
-                                    argument: { type: "Identifier", name: "veilmark$return" }
-                                }
-                            ]
-                        };
+                    } else if (exitsCurrentTry(node, stack)) {
+                        return withFinalizerBefore(node, finalizer);
                     } else {
                         return node;
                     }

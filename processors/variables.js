@@ -9,6 +9,63 @@ var ESUtils = require("../esutils");
 var traverser = require("../traverser");
 var utils = require("../utils");
 
+function isReferenceIdentifier(node, stack) {
+    var parentFrame = stack[1];
+    if (!parentFrame) {
+        return true;
+    }
+
+    var parent = parentFrame.node;
+    var key = parentFrame.key;
+
+    if ((parent.type == "FunctionDeclaration" || parent.type == "FunctionExpression") && (key == "id" || key == "params")) {
+        return false;
+    }
+    if ((parent.type == "ClassDeclaration" || parent.type == "ClassExpression") && key == "id") {
+        return false;
+    }
+    if (parent.type == "VariableDeclarator" && key == "id") {
+        return false;
+    }
+    if (parent.type == "CatchClause" && key == "param") {
+        return false;
+    }
+    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) {
+        return false;
+    }
+    if (parent.type == "Property" && key == "key" && parent.computed === false) {
+        return false;
+    }
+    if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && parent.computed === false) {
+        return false;
+    }
+    if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") {
+        return false;
+    }
+
+    return true;
+}
+
+function functionExpressionUsesOwnName(node) {
+    assert.equal(node.type, "FunctionExpression");
+
+    if (!node.id) {
+        return false;
+    }
+
+    var name = node.id.name;
+    var used = false;
+
+    traverser.traverse(node.body, [], (child, stack) => {
+        if (child.type == "Identifier" && child.name == name && isReferenceIdentifier(child, stack)) {
+            used = true;
+        }
+        return child;
+    });
+
+    return used;
+}
+
 module.exports = class Variables {
 
     constructor (logger) {
@@ -25,7 +82,7 @@ module.exports = class Variables {
      */
     removeFunctionExpressionIds (ast) {
         return traverser.traverse(ast, [], (node, stack) => {
-            if (node.type == "FunctionExpression" && node.id) {
+            if (node.type == "FunctionExpression" && node.id && !functionExpressionUsesOwnName(node)) {
                 node.id = null;
             }
             return node;

@@ -83,6 +83,10 @@ function createMethodStub(id) {
 function anonymousMethodName(node) {
     assert.equal(node.type, "FunctionExpression");
 
+    if (node.id) {
+        return node.id.name;
+    }
+
     if (!node[ANON_METHOD_ID]) {
         Object.defineProperty(node, ANON_METHOD_ID, {
             configurable: false,
