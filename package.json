@@ -60,7 +60,7 @@
     "dependencies": {
         "@babel/core": "^8.0.1",
         "@babel/preset-env": "^8.0.2",
-        "babel-core": "6.10.4",
+        "babel-core": "6.26.3",
         "babel-plugin-check-es2015-constants": "^6.3.13",
         "babel-plugin-transform-es2015-arrow-functions": "^6.3.13",
         "babel-plugin-transform-es2015-block-scoped-functions": "^6.3.13",
@@ -88,8 +88,8 @@
         "esshorten": "1.1.1",
         "estraverse": "4.2.0",
         "expr-eval": "1.0.0",
-        "lodash": "4.13.1",
-        "minimist": "1.2.0"
+        "lodash": "4.18.1",
+        "minimist": "1.2.8"
     },
     "engines": {
         "node": ">=24.0.0",
