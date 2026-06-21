@@ -63,7 +63,7 @@
     "dependencies": {
         "@babel/parser": "^8.0.0",
         "escodegen": "^2.1.0",
-        "escope": "3.6.0",
+        "escope": "4.0.0",
         "esprima": "^4.0.1",
         "esshorten": "1.1.1",
         "estraverse": "4.2.0",
