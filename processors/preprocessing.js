@@ -2,12 +2,19 @@
 
 var _ = require("lodash");
 
-var { Parser: Parser } = require("expr-eval");
+var { Parser: Parser } = require("expr-eval-fork");
 
 const DEFAULT_PREPROCESSOR_VARIABLES = {
     "true": 1,
     "false": 0
 };
+
+function normalizeConditionSyntax(condition) {
+    return condition
+        .replace(/&&/g, " and ")
+        .replace(/\|\|/g, " or ")
+        .replace(/!(?!=)/g, " not ");
+}
 
 /**
  * Generates code from an array of text nodes.
@@ -119,8 +126,9 @@ class IfBlockNode extends BlockNode {
      */
     evalCond(defines) {
         let condition = this.condition;
-        condition = condition.replace(/!defined\(([\w\d]+)\)/, (match, p1) => !defines.hasOwnProperty(p1) ? "true" : "false");
-        condition = condition.replace(/defined\(([\w\d]+)\)/, (match, p1) => defines.hasOwnProperty(p1) ? "true" : "false");
+        condition = condition.replace(/!defined\(([\w\d]+)\)/g, (match, p1) => !defines.hasOwnProperty(p1) ? "true" : "false");
+        condition = condition.replace(/defined\(([\w\d]+)\)/g, (match, p1) => defines.hasOwnProperty(p1) ? "true" : "false");
+        condition = normalizeConditionSyntax(condition);
         return Parser.evaluate(condition, defines);
     }
     /**
