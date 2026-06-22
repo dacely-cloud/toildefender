@@ -158,7 +158,7 @@ function licenseGate(input) {
         : { ok: false, total: total - 5 };
 }
 
-globalThis.__result = licenseGate("Veilmark");
+globalThis.__result = licenseGate("ToilDefender");
 ```
 
 The demo artifact is generated with every major protection enabled and

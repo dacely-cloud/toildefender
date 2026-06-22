@@ -791,7 +791,7 @@ test("control-flow flattening declares throw sentinel for strict module output",
         compress: false
     });
 
-    assert.match(defended, /veilmark\$tobethrown/);
+    assert.match(defended, /toildefender\$tobethrown/);
     assert.deepEqual(runStrict(defended), run(code));
 });
 
@@ -866,7 +866,7 @@ test("scope ratio keeps generated literal table reachable under control flow", (
         logLevel: "error"
     }).code;
 
-    assert.equal(defended.includes("veilmark$literals"), false);
+    assert.equal(defended.includes("toildefender$literals"), false);
     assert.deepEqual(run(defended), run(code));
 });
 
@@ -1132,11 +1132,11 @@ test("control-flow flattener emits declared tobethrown sentinel", () => {
         compress: false
     });
 
-    assert.match(defended, /var veilmark\$tobethrown(?: = null)?/);
+    assert.match(defended, /var toildefender\$tobethrown(?: = null)?/);
     assert.deepEqual(runStrict(`${defended}
         globalThis.__result = {
             value: globalThis.__result,
-            leaked: Object.prototype.hasOwnProperty.call(globalThis, "veilmark$tobethrown")
+            leaked: Object.prototype.hasOwnProperty.call(globalThis, "toildefender$tobethrown")
         };
     `), {
         value: run(code),
@@ -1183,7 +1183,7 @@ test("preserves uncurried prototype method receivers", () => {
 test("preserves browser-global UMD-style script semantics", () => {
     assertSameRuntimeResult(`
         (function (root, factory) {
-            root.VeilmarkTest = factory();
+            root.ToilDefenderTest = factory();
         })(globalThis, function () {
             const registry = [
                 function (value) {
@@ -1212,9 +1212,9 @@ test("preserves browser-global UMD-style script semantics", () => {
         });
 
         globalThis.__result = [
-            globalThis.VeilmarkTest.run(4),
-            globalThis.VeilmarkTest.nested(5),
-            window.VeilmarkTest === globalThis.VeilmarkTest
+            globalThis.ToilDefenderTest.run(4),
+            globalThis.ToilDefenderTest.nested(5),
+            window.ToilDefenderTest === globalThis.ToilDefenderTest
         ];
     `);
 });
@@ -1229,8 +1229,8 @@ test("packs object literal keys into a numeric schema instead of alternating key
     `;
     const defended = defendInspectableCode(code);
 
-    assert.match(defended, /veilmark\$toObject\([^,]+,\s*\[[\s\S]*?\]\s*,\s*\[/);
-    assert.match(defended, /veilmark\$objectKeys/);
+    assert.match(defended, /toildefender\$toObject\([^,]+,\s*\[[\s\S]*?\]\s*,\s*\[/);
+    assert.match(defended, /toildefender\$objectKeys/);
     assert.equal(defended.includes("alpha"), false);
     assert.equal(defended.includes("beta"), false);
     assert.equal(defended.includes("gamma"), false);
@@ -1249,7 +1249,7 @@ test("can disable object literal arrayization with the object_packing feature fl
         object_packing: false
     });
 
-    assert.doesNotMatch(defended, /veilmark\$toObject\(\s*\[/);
+    assert.doesNotMatch(defended, /toildefender\$toObject\(\s*\[/);
     assert.equal(defended.includes("alpha"), true);
     assert.equal(defended.includes("beta"), true);
     assert.deepEqual(run(defended), run(code));
@@ -1275,7 +1275,7 @@ test("object packing injects runtime helper when scope flattening is disabled", 
         compress: false
     });
 
-    assert.match(defended, /function veilmark\$toObject/);
+    assert.match(defended, /function toildefender\$toObject/);
     assert.deepEqual(run(defended), run(code));
 });
 
@@ -1322,7 +1322,7 @@ test("virtual machine runtime caches encrypted bytecode without emitting decoded
 
     assert.equal(defended.includes("var tokens = []"), false);
     assert.equal(defended.includes("tokens.push"), false);
-    assert.match(defended, /function veilmark\$numericVmDigit/);
+    assert.match(defended, /function toildefender\$numericVmDigit/);
     assert.match(defended, /var encryptedCache = cache && cache\[0\] \|\| null/);
     assert.match(defended, /plainCache = new Array/);
     assert.match(defended, /var layout = seed & 1/);
@@ -1452,8 +1452,8 @@ test("virtual machine constants decode lazily at access sites", () => {
         globalThis.__result = choose(false);
     `;
     const activeCode = code.replace("choose(false)", "choose(true)");
-    const marker = "    return out;\n}\nfunction veilmark$numericVmPow";
-    const guard = "    if (out === " + JSON.stringify(hidden) + ") throw new Error(\"unused constant decoded\");\n    return out;\n}\nfunction veilmark$numericVmPow";
+    const marker = "    return out;\n}\nfunction toildefender$numericVmPow";
+    const guard = "    if (out === " + JSON.stringify(hidden) + ") throw new Error(\"unused constant decoded\");\n    return out;\n}\nfunction toildefender$numericVmPow";
     const defended = defendVmCode(code);
     const activeDefended = defendVmCode(activeCode);
     const guarded = defended.replace(marker, guard);
@@ -1531,7 +1531,7 @@ test("virtual machine protection can be enabled with protections.virtualMachine 
     });
 
     assert.match(result.code, /\d+n/);
-    assert.match(result.code, /function veilmark\$numericVmRun/);
+    assert.match(result.code, /function toildefender\$numericVmRun/);
     assert.deepEqual(run(result.code), run(code));
 });
 
@@ -1560,7 +1560,7 @@ test("virtual machine protection can limit selected functions", () => {
         logLevel: "error"
     });
 
-    assert.equal((result.code.match(/veilmark\$numericVmRun/g) || []).length, 2);
+    assert.equal((result.code.match(/toildefender\$numericVmRun/g) || []).length, 2);
     assert.deepEqual(run(result.code), run(code));
 });
 
@@ -1591,9 +1591,9 @@ test("scope extraction does not bind-wrap numeric VM runtime internals", () => {
         logLevel: "error"
     });
 
-    assert.match(result.code, /function veilmark\$numericVmRun/);
-    assert.equal(result.code.includes("veilmark$bind(veilmark$numericVmRun"), false);
-    assert.equal(result.code.includes("veilmark$bind(veilmark$hashMesh"), false);
+    assert.match(result.code, /function toildefender\$numericVmRun/);
+    assert.equal(result.code.includes("toildefender$bind(toildefender$numericVmRun"), false);
+    assert.equal(result.code.includes("toildefender$bind(toildefender$hashMesh"), false);
     assert.deepEqual(run(result.code), run(code));
 });
 
@@ -1606,11 +1606,11 @@ test("hash-mesh unlock encrypts VM bytecode and preserves behavior", () => {
             }
             return score;
         }
-        globalThis.__result = [locked("Veilmark"), locked("bot")];
+        globalThis.__result = [locked("ToilDefender"), locked("bot")];
     `;
     const defended = defendHashMeshCode(code);
 
-    assert.match(defended, /veilmark\$hashMeshUnlock/);
+    assert.match(defended, /toildefender\$hashMeshUnlock/);
     assert.match(defended, /\d+n/);
     assert.equal(defended.includes("score += 13"), false);
     assert.deepEqual(run(defended), run(code));
@@ -1625,8 +1625,8 @@ test("hash-mesh unlock makes VM bytecode fail when mesh unlock logic is changed"
     `;
     const defended = defendHashMeshCode(code);
     const tampered = defended.replace(
-        "function veilmark$hashMeshStream(key, index, base, salt) {",
-        "function veilmark$hashMeshStream(key, index, base, salt) { key = (key + 1) >>> 0;"
+        "function toildefender$hashMeshStream(key, index, base, salt) {",
+        "function toildefender$hashMeshStream(key, index, base, salt) { key = (key + 1) >>> 0;"
     );
 
     assert.deepEqual(run(defended), run(code));
@@ -1664,7 +1664,7 @@ test("hash-mesh unlock can be enabled with protections.hashMesh config", () => {
         logLevel: "error"
     });
 
-    assert.match(result.code, /veilmark\$hashMeshUnlock/);
+    assert.match(result.code, /toildefender\$hashMeshUnlock/);
     assert.deepEqual(run(result.code), run(code));
 });
 
@@ -1682,7 +1682,7 @@ test("virtual machine protection survives full obfuscation pipeline", () => {
                 value: rows[0] + rows[rows.length - 1]
             };
         }
-        globalThis.__result = packed("Veilmark");
+        globalThis.__result = packed("ToilDefender");
     `;
     const result = toildefender.do({
         code,
@@ -1725,7 +1725,7 @@ test("virtual machine runtime helper names mangle consistently in final mangle",
             value += input.charCodeAt(0);
             return value;
         }
-        globalThis.__result = Runner.run("Veilmark");
+        globalThis.__result = Runner.run("ToilDefender");
     `;
     const result = toildefender.do({
         code,
@@ -1752,8 +1752,8 @@ test("virtual machine runtime helper names mangle consistently in final mangle",
         logLevel: "error"
     });
 
-    assert.doesNotMatch(result.code, /veilmark\$numericVmString/);
-    assert.doesNotMatch(result.code, /veilmark\$numericVmRun/);
+    assert.doesNotMatch(result.code, /toildefender\$numericVmString/);
+    assert.doesNotMatch(result.code, /toildefender\$numericVmRun/);
     assert.deepEqual(run(result.code), run(code));
 });
 
@@ -1762,7 +1762,7 @@ test("virtual machine runtime helpers stay visible when scope runs without contr
         function packed(input) {
             return input.length + input.charCodeAt(0);
         }
-        globalThis.__result = packed("Veilmark");
+        globalThis.__result = packed("ToilDefender");
     `;
     const result = toildefender.do({
         code,

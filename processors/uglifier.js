@@ -99,7 +99,7 @@ function isRenamableVariable(scope, variable, unresolvedNames) {
     }
     if (
         typeof variable.name == "string"
-        && variable.name.indexOf("veilmark$anon$") === 0
+        && variable.name.indexOf("toildefender$anon$") === 0
         && unresolvedNames.has(variable.name)
     ) {
         return false;

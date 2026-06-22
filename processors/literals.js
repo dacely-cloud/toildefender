@@ -147,7 +147,7 @@ function makeStringByteArrayCall(str) {
     
     return {
         type: "CallExpression",
-        callee: { type: "Identifier", name: "veilmark$fromCharCodes" },
+        callee: { type: "Identifier", name: "toildefender$fromCharCodes" },
         arguments: str.split("").map(x => ({ type: "Literal", value: x.charCodeAt() }))
     };
 }
@@ -161,7 +161,7 @@ function isUnencodedPropertyKey(stack) {
 }
 
 function isNumericVmInternalFunction(stack) {
-    return stack.some(frame => frame.node && frame.node.veilmark$numericVmInternal === true);
+    return stack.some(frame => frame.node && frame.node.toildefender$numericVmInternal === true);
 }
 
 function makeStringExpression(str) {

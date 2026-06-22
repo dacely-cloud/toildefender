@@ -8,7 +8,7 @@ var estest = require("../estest");
 var traverser = require("../traverser");
 
 var RUNTIME = `
-function veilmark$numericVmString(program, length, salt) {
+function toildefender$numericVmString(program, length, salt) {
     var out = "";
     var i = 0;
     var base = BigInt(65537);
@@ -21,7 +21,7 @@ function veilmark$numericVmString(program, length, salt) {
     return out;
 }
 
-function veilmark$numericVmPow(a, b) {
+function toildefender$numericVmPow(a, b) {
     if (typeof a === "bigint" && typeof b === "bigint") {
         if (b < BigInt(0)) throw new RangeError("BigInt exponent must be positive");
         var out = BigInt(1);
@@ -37,7 +37,7 @@ function veilmark$numericVmPow(a, b) {
     return Math.pow(a, b);
 }
 
-function veilmark$numericVmDigit(program, baseBig, index, powers) {
+function toildefender$numericVmDigit(program, baseBig, index, powers) {
     if (powers) {
         while (powers.length <= index) {
             powers[powers.length] = powers[powers.length - 1] * baseBig;
@@ -52,68 +52,68 @@ function veilmark$numericVmDigit(program, baseBig, index, powers) {
     return Number((program / pow) % baseBig);
 }
 
-function veilmark$hashMeshMix(current, value) {
+function toildefender$hashMeshMix(current, value) {
     var h = (current ^ value) >>> 0;
     h = Math.imul(h ^ (h >>> 16), 2246822507) >>> 0;
     h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
     return (h ^ (h >>> 16)) >>> 0;
 }
 
-function veilmark$hashMeshValue(hash, value) {
-    if (typeof value === "number") return veilmark$hashMeshMix(hash, value >>> 0);
+function toildefender$hashMeshValue(hash, value) {
+    if (typeof value === "number") return toildefender$hashMeshMix(hash, value >>> 0);
     if (typeof value === "string") {
-        hash = veilmark$hashMeshMix(hash, value.length >>> 0);
+        hash = toildefender$hashMeshMix(hash, value.length >>> 0);
         var j = 0;
         while (j < value.length) {
-            hash = veilmark$hashMeshMix(hash, value.charCodeAt(j));
+            hash = toildefender$hashMeshMix(hash, value.charCodeAt(j));
             j += 1;
         }
         return hash;
     }
     if (value && typeof value.length === "number") {
-        hash = veilmark$hashMeshMix(hash, value.length >>> 0);
+        hash = toildefender$hashMeshMix(hash, value.length >>> 0);
         var i = 0;
         while (i < value.length) {
-            hash = veilmark$hashMeshValue(hash, value[i]);
+            hash = toildefender$hashMeshValue(hash, value[i]);
             i += 1;
         }
         return hash;
     }
-    return veilmark$hashMeshMix(hash, 3735928559);
+    return toildefender$hashMeshMix(hash, 3735928559);
 }
 
-function veilmark$hashMeshKey(mesh, base, tokenCount, seed, tag, ops) {
+function toildefender$hashMeshKey(mesh, base, tokenCount, seed, tag, ops) {
     var hash = 2166136261;
-    hash = veilmark$hashMeshMix(hash, 1145713480);
-    hash = veilmark$hashMeshMix(hash, 1296388936);
-    hash = veilmark$hashMeshValue(hash, mesh);
-    hash = veilmark$hashMeshMix(hash, base >>> 0);
-    hash = veilmark$hashMeshMix(hash, tokenCount >>> 0);
-    hash = veilmark$hashMeshMix(hash, seed >>> 0);
-    hash = veilmark$hashMeshMix(hash, tag >>> 0);
-    hash = veilmark$hashMeshValue(hash, ops);
+    hash = toildefender$hashMeshMix(hash, 1145713480);
+    hash = toildefender$hashMeshMix(hash, 1296388936);
+    hash = toildefender$hashMeshValue(hash, mesh);
+    hash = toildefender$hashMeshMix(hash, base >>> 0);
+    hash = toildefender$hashMeshMix(hash, tokenCount >>> 0);
+    hash = toildefender$hashMeshMix(hash, seed >>> 0);
+    hash = toildefender$hashMeshMix(hash, tag >>> 0);
+    hash = toildefender$hashMeshValue(hash, ops);
     return hash >>> 0;
 }
 
-function veilmark$hashMeshStream(key, index, base, salt) {
-    var hash = veilmark$hashMeshMix(key >>> 0, 1398035796);
-    hash = veilmark$hashMeshMix(hash, salt >>> 0);
-    hash = veilmark$hashMeshMix(hash, index >>> 0);
-    hash = veilmark$hashMeshMix(hash, Math.imul(index + 1, 2654435761) >>> 0);
+function toildefender$hashMeshStream(key, index, base, salt) {
+    var hash = toildefender$hashMeshMix(key >>> 0, 1398035796);
+    hash = toildefender$hashMeshMix(hash, salt >>> 0);
+    hash = toildefender$hashMeshMix(hash, index >>> 0);
+    hash = toildefender$hashMeshMix(hash, Math.imul(index + 1, 2654435761) >>> 0);
     return hash % base;
 }
 
-function veilmark$hashMeshUnlock(program, base, baseBig, index, key, salt, powers) {
-    var cipher = veilmark$numericVmDigit(program, baseBig, index, powers);
-    return (cipher - veilmark$hashMeshStream(key, index, base, salt) + base) % base;
+function toildefender$hashMeshUnlock(program, base, baseBig, index, key, salt, powers) {
+    var cipher = toildefender$numericVmDigit(program, baseBig, index, powers);
+    return (cipher - toildefender$hashMeshStream(key, index, base, salt) + base) % base;
 }
 
-function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, argsLike, self, ops, mesh, refs, cache) {
+function toildefender$numericVmRun(program, base, tokenCount, seed, tag, constants, argsLike, self, ops, mesh, refs, cache) {
     var baseBig = BigInt(base);
     var meshKey = 0;
     var meshSalt = 0;
     if (mesh) {
-        meshKey = veilmark$hashMeshKey(mesh, base, tokenCount, seed, tag, ops);
+        meshKey = toildefender$hashMeshKey(mesh, base, tokenCount, seed, tag, ops);
         meshSalt = mesh[5] >>> 0;
     }
     var encryptedCache = cache && cache[0] || null;
@@ -157,7 +157,7 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         while (index < tokenCount) {
             var cipher = Number(work % baseBig);
             work = work / baseBig;
-            encryptedCache[index] = mesh ? (cipher - veilmark$hashMeshStream(meshKey, index, base, meshSalt) + base) % base : cipher;
+            encryptedCache[index] = mesh ? (cipher - toildefender$hashMeshStream(meshKey, index, base, meshSalt) + base) % base : cipher;
             index += 1;
         }
         if (cache) cache[0] = encryptedCache;
@@ -297,7 +297,7 @@ function veilmark$numericVmRun(program, base, tokenCount, seed, tag, constants, 
         if (op === ops[14]) { var mulB = pop(); var mulA = pop(); push(mulA * mulB); continue; }
         if (op === ops[15]) { var divB = pop(); var divA = pop(); push(divA / divB); continue; }
         if (op === ops[16]) { var modB = pop(); var modA = pop(); push(modA % modB); continue; }
-        if (op === ops[17]) { var powB = pop(); var powA = pop(); push(veilmark$numericVmPow(powA, powB)); continue; }
+        if (op === ops[17]) { var powB = pop(); var powA = pop(); push(toildefender$numericVmPow(powA, powB)); continue; }
         if (op === ops[18]) { push(-pop()); continue; }
         if (op === ops[19]) { push(!pop()); continue; }
         if (op === ops[20]) { push(~pop()); continue; }
@@ -373,7 +373,7 @@ function functionName(node) { return node.id && node.id.name ? node.id.name : ""
 function markNumericVmInternal(ast) {
     return traverser.traverse(ast, [], function (node) {
         if (estest.isFunction(node)) {
-            node.veilmark$numericVmInternal = true;
+            node.toildefender$numericVmInternal = true;
         }
         return node;
     });
@@ -1037,7 +1037,7 @@ Compiler.prototype.constantExpression = function (constant) {
     if (constant.kind === "string" || constant.kind === "reference") {
         var value = String(constant.value);
         var salt = (next() & 65535) || 1;
-        var decoded = call(identifier("veilmark$numericVmString"), [ bigintExpression(stringBlob(value, salt), next), literal(value.length), literal(salt) ]);
+        var decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(value, salt), next), literal(value.length), literal(salt) ]);
         if (constant.kind === "reference") {
             return {
                 type: "ConditionalExpression",
@@ -1056,7 +1056,7 @@ Compiler.prototype.referenceExpression = function (value) {
     var next = this.dialect.next;
     var name = String(value);
     var salt = (next() & 65535) || 1;
-    var decoded = call(identifier("veilmark$numericVmString"), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
+    var decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
     return {
         type: "ConditionalExpression",
         test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
@@ -1077,7 +1077,7 @@ Compiler.prototype.constantCellExpression = function (constant) {
     return arrayExpression([
         literal(constant.kind === "reference" ? 2 : 0),
         Object.assign(functionExpression([ returnStatement(this.constantExpression(constant)) ]), {
-            veilmark$numericVmInternal: true
+            toildefender$numericVmInternal: true
         })
     ]);
 };
@@ -1115,7 +1115,7 @@ function makeDialect(seedText) {
 
 function vmCall(record, next, refs) {
     refs = refs || {};
-    return call(identifier("veilmark$numericVmRun"), [
+    return call(identifier("toildefender$numericVmRun"), [
         bigintExpression(record.blob, next),
         literal(record.base),
         literal(record.tokenCount),
@@ -1166,7 +1166,7 @@ module.exports = class NumericVm {
     shouldTry(node) {
         if (!this.options.enabled || !estest.isFunction(node) || node.generator || node.async) return false;
         if (!node.body || node.body.type !== "BlockStatement") return false;
-        if (functionName(node).indexOf("veilmark$numericVm") === 0) return false;
+        if (functionName(node).indexOf("toildefender$numericVm") === 0) return false;
         var bodySize = node.body.body.length;
         if (bodySize < this.options.minFunctionSize || bodySize > this.options.maxFunctionSize) return false;
         if (this.options.virtualize === "all-supported") return true;
@@ -1195,17 +1195,17 @@ module.exports = class NumericVm {
                 var originalBodySize = node.body && node.body.body ? node.body.body.length : 0;
                 var dialect = makeDialect(self.options.seed + ":" + transformed + ":" + functionName(node));
                 var record = new Compiler(node, dialect, self.options).compile();
-                var dataName = "veilmark$numericVmData$" + transformed;
-                var opsName = "veilmark$numericVmOps$" + transformed;
-                var meshName = "veilmark$numericVmMesh$" + transformed;
-                var cacheName = "veilmark$numericVmCache$" + transformed;
+                var dataName = "toildefender$numericVmData$" + transformed;
+                var opsName = "toildefender$numericVmOps$" + transformed;
+                var meshName = "toildefender$numericVmMesh$" + transformed;
+                var cacheName = "toildefender$numericVmCache$" + transformed;
                 [
                     variableDeclaration(dataName, arrayExpression(record.constants)),
                     variableDeclaration(opsName, arrayExpression(record.opValues)),
                     variableDeclaration(meshName, record.mesh ? meshExpression(record.mesh) : literal(null)),
                     variableDeclaration(cacheName, arrayExpression([]))
                 ].forEach(function (declaration) {
-                    declaration.veilmark$numericVmInternal = true;
+                    declaration.toildefender$numericVmInternal = true;
                     dataDeclarations.push(declaration);
                 });
                 node.body = { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next, {

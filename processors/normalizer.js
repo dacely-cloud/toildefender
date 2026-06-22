@@ -135,7 +135,7 @@ function withFinalizerBefore(node, finalizer) {
             declarations: [
                 {
                     type: "VariableDeclarator",
-                    id: { type: "Identifier", name: "veilmark$return" },
+                    id: { type: "Identifier", name: "toildefender$return" },
                     init: node.argument
                 }
             ]
@@ -143,7 +143,7 @@ function withFinalizerBefore(node, finalizer) {
         body.push(utils.cloneISwearIKnowWhatImDoing(finalizer));
         body.push({
             type: "ReturnStatement",
-            argument: { type: "Identifier", name: "veilmark$return" }
+            argument: { type: "Identifier", name: "toildefender$return" }
         });
     } else {
         body.push(utils.cloneISwearIKnowWhatImDoing(finalizer));
@@ -342,7 +342,7 @@ function objectAssignCall(parts) {
 function objectWithoutKeysCall(source, keys) {
     return {
         type: "CallExpression",
-        callee: { type: "Identifier", name: "veilmark$objectWithoutKeys" },
+        callee: { type: "Identifier", name: "toildefender$objectWithoutKeys" },
         arguments: [
             source,
             {
@@ -1208,7 +1208,7 @@ module.exports = class Normalizer {
                             block: node.block,
                             handler: {
                                 type: "CatchClause",
-                                param: { type: "Identifier", name: "veilmark$e" },
+                                param: { type: "Identifier", name: "toildefender$e" },
                                 body: {
                                     type: "BlockStatement",
                                     body: [
@@ -1218,8 +1218,8 @@ module.exports = class Normalizer {
                                             declarations: [
                                                 {
                                                     type: "VariableDeclarator",
-                                                    id: { type: "Identifier", name: "veilmark$_e" },
-                                                    init: { type: "Identifier", name: "veilmark$e" }
+                                                    id: { type: "Identifier", name: "toildefender$_e" },
+                                                    init: { type: "Identifier", name: "toildefender$e" }
                                                 }
                                             ]
                                         }
@@ -1230,10 +1230,10 @@ module.exports = class Normalizer {
                         node.finalizer,
                         {
                             type: "IfStatement",
-                            test: { type: "Identifier", name: "veilmark$_e" },
+                            test: { type: "Identifier", name: "toildefender$_e" },
                             consequent: {
                                 type: "ThrowStatement",
-                                argument: { type: "Identifier", name: "veilmark$_e" }
+                                argument: { type: "Identifier", name: "toildefender$_e" }
                             }
                         }
                     ]

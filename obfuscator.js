@@ -120,7 +120,7 @@ var featureDeps = {
 };
 
 function isNumericVmInternalNode(node) {
-    return node && node.veilmark$numericVmInternal === true;
+    return node && node.toildefender$numericVmInternal === true;
 }
 
 function takeNumericVmInternalStatements(ast) {

@@ -10,9 +10,9 @@ var utils = require("../utils");
 
 /**
  * Merges nested bind calls like
- * veilmark$bind(veilmark$bind(main, 1234), 5678)
+ * toildefender$bind(toildefender$bind(main, 1234), 5678)
  * to
- * veilmark$bind(main, 1234, 5678)
+ * toildefender$bind(main, 1234, 5678)
  * @param {Node} node
  * @returns {Node}
  */
@@ -27,7 +27,7 @@ function mergeNestedBinds(node) {
 }
 
 /**
- * Checks whether node is a call to veilmark$bind.
+ * Checks whether node is a call to toildefender$bind.
  * @param {Node} node
  * @returns {boolean}
  */
@@ -36,7 +36,7 @@ function isBindCall(node) {
     
     return node.type == "CallExpression"
         && node.callee.type == "Identifier"
-        && node.callee.name == "veilmark$bind";
+        && node.callee.name == "toildefender$bind";
 }
 
 module.exports = class Postprocessing {

@@ -72,17 +72,17 @@ function isClassMethodScope(scope) {
         if (node.type == "MethodDefinition" || node.type == "ClassBody") {
             return true;
         }
-        node = node.veilmark$parent;
+        node = node.toildefender$parent;
     }
     return false;
 }
 
 function isNumericVmInternalNode(node) {
     while (node) {
-        if (node.veilmark$numericVmInternal === true) {
+        if (node.toildefender$numericVmInternal === true) {
             return true;
         }
-        node = node.veilmark$parent;
+        node = node.toildefender$parent;
     }
     return false;
 }
@@ -164,7 +164,7 @@ module.exports = class Variables {
                                             generator: def.node.generator === true,
                                             expression: def.node.expression === true,
                                             async: def.node.async === true,
-                                            veilmark$numericVmInternal: def.node.veilmark$numericVmInternal === true
+                                            toildefender$numericVmInternal: def.node.toildefender$numericVmInternal === true
                                         }
                                     }
                                 ]

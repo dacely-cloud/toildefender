@@ -41,7 +41,7 @@ function canMoveLiteral(node) {
 }
 
 function isNumericVmInternalFunction(stack) {
-    return stack.some(frame => frame.node && frame.node.veilmark$numericVmInternal === true);
+    return stack.some(frame => frame.node && frame.node.toildefender$numericVmInternal === true);
 }
 
 module.exports = class Identifiers {
@@ -93,7 +93,7 @@ module.exports = class Identifiers {
     }
     
     /**
-     * Replace objects with an array via veilmark$toObject.
+     * Replace objects with an array via toildefender$toObject.
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
@@ -125,7 +125,7 @@ module.exports = class Identifiers {
 
                 return {
                     type: "CallExpression",
-                    callee: { type: "Identifier", name: "veilmark$toObject"  },
+                    callee: { type: "Identifier", name: "toildefender$toObject"  },
                     arguments: [
                         literal(String(utils.hash(schema.join(",")))),
                         {
@@ -215,7 +215,7 @@ module.exports = class Identifiers {
     }
     
     /**
-     * Move all literals into the veilmark$literals array.
+     * Move all literals into the toildefender$literals array.
      * @param {Node} ast Root node
      * @param {ScopeManager} scopeManager Scope manager
      * @returns {Node} Root node
@@ -240,7 +240,7 @@ module.exports = class Identifiers {
                 
                 return {
                     type: "MemberExpression",
-                    object: { type: "Identifier", name: "veilmark$literals" },
+                    object: { type: "Identifier", name: "toildefender$literals" },
                     property: { type: "Literal", value: idx },
                     computed: true
                 };
@@ -255,7 +255,7 @@ module.exports = class Identifiers {
             declarations: [
                 {
                     type: "VariableDeclarator",
-                    id: { type: "Identifier", name: "veilmark$literals" },
+                    id: { type: "Identifier", name: "toildefender$literals" },
                     init: {
                         type: "ArrayExpression",
                         elements: vars.map(x => ({ type: "Literal", value: x }))

@@ -19,17 +19,17 @@ function isClassMethodScope(scope) {
         if (node.type == "MethodDefinition" || node.type == "ClassBody") {
             return true;
         }
-        node = node.veilmark$parent;
+        node = node.toildefender$parent;
     }
     return false;
 }
 
 function isNumericVmInternalNode(node) {
     while (node) {
-        if (node.veilmark$numericVmInternal === true) {
+        if (node.toildefender$numericVmInternal === true) {
             return true;
         }
-        node = node.veilmark$parent;
+        node = node.toildefender$parent;
     }
     return false;
 }
@@ -48,7 +48,7 @@ function scopeReference(scopeVarName, index) {
         object: { type: "Identifier", name: scopeVarName },
         property: { type: "Literal", value: index },
         computed: true,
-        veilmark$scopeObjectReference: true
+        toildefender$scopeObjectReference: true
     };
 }
 
@@ -117,12 +117,12 @@ function markPropertyValueReplacement(stack) {
 }
 
 function isReferenceInsideNestedFunction(scopeBlock, identifier) {
-    var current = identifier && identifier.veilmark$parent;
+    var current = identifier && identifier.toildefender$parent;
     while (current && current != scopeBlock) {
         if (estest.isFunction(current)) {
             return true;
         }
-        current = current.veilmark$parent;
+        current = current.toildefender$parent;
     }
     return false;
 }
@@ -211,7 +211,7 @@ module.exports = class Scopes {
                 if (current == ancestor) {
                     return distance;
                 }
-                current = current.veilmark$parent;
+                current = current.toildefender$parent;
                 distance += 1;
             }
             return -1;
@@ -226,7 +226,7 @@ module.exports = class Scopes {
             var best = null;
             var bestDistance = Infinity;
             entries.forEach(entry => {
-                var liveBlock = entry.scopeDecl && entry.scopeDecl.veilmark$parent;
+                var liveBlock = entry.scopeDecl && entry.scopeDecl.toildefender$parent;
                 var distance = liveBlock ? ancestorDistance(liveBlock, node) : -1;
                 if (distance < 0) {
                     distance = ancestorDistance(entry.block, node);
@@ -346,7 +346,7 @@ module.exports = class Scopes {
                         referencesFor(variable).forEach(reference => {
                             replacements.set(reference.identifier, {
                                 type: "CallExpression",
-                                callee: { type: "Identifier", name: "veilmark$bind" },
+                                callee: { type: "Identifier", name: "toildefender$bind" },
                                 arguments: [
                                     { type: "Identifier", name: reference.identifier.name },
                                     { type: "Identifier", name: scopeVarName }
@@ -387,7 +387,7 @@ module.exports = class Scopes {
                         init: { type: "ArrayExpression", elements: [] }
                     }
                 ],
-                veilmark$scopeObject: true
+                toildefender$scopeObject: true
             };
             
             this.esutils.insertIntoScope(scope, scopeDecl);
@@ -414,7 +414,7 @@ module.exports = class Scopes {
                                         object: { type: "Identifier", name: scopeVarName },
                                         property: { type: "Literal", value: index },
                                         computed: true,
-                                        veilmark$scopeObjectReference: true
+                                        toildefender$scopeObjectReference: true
                                     },
                                     right: rewriteKnownReferences(def.node.init)
                                 }
@@ -435,7 +435,7 @@ module.exports = class Scopes {
                             this.esutils.replaceNode(scope.block, reference.identifier, cloneReplacement(replacements.get(reference.identifier) || scopeReference(scopeVarName, index)));
                         });
                     } else if (def.type == "CatchClause") {
-                        Object.defineProperty(scope.block, "veilmark$exception", {
+                        Object.defineProperty(scope.block, "toildefender$exception", {
                             value: scopeReference(scopeVarName, index),
                             configurable: true
                         });
@@ -483,7 +483,7 @@ module.exports = class Scopes {
                 if (node.type == "FunctionExpression") {
                     return {
                         type: "CallExpression",
-                        callee: { type: "Identifier", name: "veilmark$bind" },
+                        callee: { type: "Identifier", name: "toildefender$bind" },
                         arguments: [
                             node,
                             { type: "Identifier", name: scopeVarName }

@@ -173,7 +173,7 @@ module.exports = class Flattener {
                             expression: {
                                 type: "AssignmentExpression",
                                 operator: "=",
-                                left: { type: "Identifier", name: "veilmark$tobethrown" },
+                                left: { type: "Identifier", name: "toildefender$tobethrown" },
                                 right: { type: "Literal", value: null }
                             }
                         },
@@ -229,7 +229,7 @@ module.exports = class Flattener {
                             declarations: [
                                 {
                                     type: "VariableDeclarator",
-                                    id: { type: "Identifier", name: "veilmark$tobethrown" },
+                                    id: { type: "Identifier", name: "toildefender$tobethrown" },
                                     init: null
                                 }
                             ]
@@ -742,7 +742,7 @@ module.exports = class Flattener {
                             expression: {
                                 type: "AssignmentExpression",
                                 operator: "=",
-                                left: node.handler.veilmark$exception,
+                                left: node.handler.toildefender$exception,
                                 right: { type: "Identifier", name: "e" }
                             }
                         },
@@ -807,12 +807,12 @@ module.exports = class Flattener {
         }
 
         traverser.traverse(ast, [], (node, stack) => {
-            if (node.veilmark$scopeObject) {
+            if (node.toildefender$scopeObject) {
                 var declaration = node.declarations && node.declarations[0];
                 if (declaration && declaration.id && declaration.id.type == "Identifier") {
                     ensureScopeObject(declaration.id.name);
                 }
-            } else if (node.veilmark$scopeObjectReference) {
+            } else if (node.toildefender$scopeObjectReference) {
                 var name = scopeNameFromReference(node);
                 if (name) {
                     var info = ensureScopeObject(name);
@@ -833,11 +833,11 @@ module.exports = class Flattener {
         });
         
         ast = traverser.traverse(ast, [], (node, stack) => {
-            if (node.veilmark$reassigningArguments && !node.veilmark$followsSlicingArguments) {
+            if (node.toildefender$reassigningArguments && !node.toildefender$followsSlicingArguments) {
                 node = { type: "EmptyStatement" };
-            } else if (node.veilmark$scopeObject) {
+            } else if (node.toildefender$scopeObject) {
                 node = { type: "EmptyStatement" };
-            } else if (node.veilmark$scopeObjectReference) {
+            } else if (node.toildefender$scopeObjectReference) {
                 var name = scopeNameFromReference(node);
                 var info = name ? scopeObjects.get(name) : null;
                 if (info) {
@@ -849,7 +849,7 @@ module.exports = class Flattener {
                 }
             } else if (node.type == "Identifier" && _.startsWith(node.name, "$$scope")) {
                 var parent = stack[1] && stack[1].node;
-                if (parent && parent.veilmark$scopeObjectReference) {
+                if (parent && parent.toildefender$scopeObjectReference) {
                     return node;
                 }
                 node.name = "$$unifiedScope";
@@ -884,7 +884,7 @@ module.exports = class Flattener {
                 declarations: [
                     {
                         type: "VariableDeclarator",
-                        id: { type: "Identifier", name: "veilmark$arguments" },
+                        id: { type: "Identifier", name: "toildefender$arguments" },
                         init: { type: "Identifier", name: "arguments" }
                     }
                 ]

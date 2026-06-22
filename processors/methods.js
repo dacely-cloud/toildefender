@@ -1,11 +1,11 @@
 "use strict";
 
 const METHODS_INJECT = `
-function veilmark$mergeArguments(a, b) {
+function toildefender$mergeArguments(a, b) {
     return Array.prototype.slice.call(a).concat(Array.prototype.slice.call(b));
 }
 
-function veilmark$bind() {
+function toildefender$bind() {
     var fn = arguments[0], prepend = Array.prototype.slice.call(arguments, 1);
     var wrapper = function() {
         return fn.apply(this, prepend.concat(Array.prototype.slice.call(arguments)));
@@ -14,13 +14,13 @@ function veilmark$bind() {
     return wrapper;
 }
 
-function veilmark$sliceArguments(args, num) {
+function toildefender$sliceArguments(args, num) {
     return Array.prototype.slice.call(args, num);
 }
 
-var veilmark$objectKeys = {};
+var toildefender$objectKeys = {};
 
-function veilmark$toObject(cacheKey, schema, values) {
+function toildefender$toObject(cacheKey, schema, values) {
     if (values === undefined && Array.isArray(cacheKey)) {
         values = schema;
         schema = cacheKey;
@@ -33,7 +33,7 @@ function veilmark$toObject(cacheKey, schema, values) {
         }
         return obj;
     }
-    var decoded = cacheKey ? veilmark$objectKeys[cacheKey] : null;
+    var decoded = cacheKey ? toildefender$objectKeys[cacheKey] : null;
     if (decoded) {
         for (var cached = 0; cached < decoded.length; cached += 1) {
             obj[decoded[cached]] = values[cached];
@@ -54,12 +54,12 @@ function veilmark$toObject(cacheKey, schema, values) {
         obj[key] = values[i];
     }
     if (cacheKey) {
-        veilmark$objectKeys[cacheKey] = keys;
+        toildefender$objectKeys[cacheKey] = keys;
     }
     return obj;
 }
 
-function veilmark$objectWithoutKeys(source, excluded) {
+function toildefender$objectWithoutKeys(source, excluded) {
     var target = {};
     if (source == null) {
         return target;
@@ -72,11 +72,11 @@ function veilmark$objectWithoutKeys(source, excluded) {
     return target;
 }
 
-function veilmark$decodeString(arr) {
+function toildefender$decodeString(arr) {
     return arr.map(function(x) { return String.fromCharCode(x & ~0 >>> 16) + String.fromCharCode(x >> 16); }).join("");
 }
 
-function veilmark$fromCharCodes() {
+function toildefender$fromCharCodes() {
     return String.fromCharCode.apply(null, arguments);
 }
 
@@ -93,10 +93,10 @@ var estest = require("../estest");
 var traverser = require("../traverser");
 var utils = require("../utils");
 
-const ANON_METHOD_ID = "veilmark$anonymousMethodId";
+const ANON_METHOD_ID = "toildefender$anonymousMethodId";
 
 /**
- * Wrap function with veilmark$bind.
+ * Wrap function with toildefender$bind.
  * @param {Identifier} Function identifier
  * @returns {Node} Wrapped function
  */
@@ -105,7 +105,7 @@ function createMethodStub(id) {
     
     return {
         type: "CallExpression",
-        callee: { type: "Identifier", name: "veilmark$bind" },
+        callee: { type: "Identifier", name: "toildefender$bind" },
         arguments: [
             id
         ]
@@ -119,7 +119,7 @@ function anonymousMethodName(node) {
         Object.defineProperty(node, ANON_METHOD_ID, {
             configurable: false,
             enumerable: false,
-            value: `veilmark$anon$${utils.hash(node)}`
+            value: `toildefender$anon$${utils.hash(node)}`
         });
     }
 
@@ -134,7 +134,7 @@ function functionDeclarationName(node) {
             Object.defineProperty(node, ANON_METHOD_ID, {
                 configurable: false,
                 enumerable: false,
-                value: `veilmark$anon$${utils.hash(node)}`
+                value: `toildefender$anon$${utils.hash(node)}`
             });
         }
         node.id = { type: "Identifier", name: node[ANON_METHOD_ID] };
@@ -195,7 +195,7 @@ function isClassMethodFunction(stack) {
 }
 
 function isNumericVmInternalFunction(node, stack) {
-    return node.veilmark$numericVmInternal === true || stack.some(frame => frame.node && frame.node.veilmark$numericVmInternal === true);
+    return node.toildefender$numericVmInternal === true || stack.some(frame => frame.node && frame.node.toildefender$numericVmInternal === true);
 }
 
 /**
@@ -215,7 +215,7 @@ function rawArgumentsIdentifier() {
     return {
         type: "Identifier",
         name: "arguments",
-        veilmark$rawArguments: true
+        toildefender$rawArguments: true
     };
 }
 
@@ -256,7 +256,7 @@ module.exports = class Methods {
      * Inserts code to copy/slice arguments from the arguments array like
      * function () { ... }
      * to
-     * function () { var veilmark$arguments = veilmark$sliceArguments(arguments, 1); ... }
+     * function () { var toildefender$arguments = toildefender$sliceArguments(arguments, 1); ... }
      * @param {Function} method
      * @param {number} num Number of arguments to be sliced off. 0 if none.
      */
@@ -270,24 +270,24 @@ module.exports = class Methods {
             declarations: [
                 {
                     type: "VariableDeclarator",
-                    id: { type: "Identifier", name: "veilmark$arguments" },
+                    id: { type: "Identifier", name: "toildefender$arguments" },
                     init: rawArgumentsIdentifier()
                 },
                 {
                     type: "VariableDeclarator",
-                    id: { type: "Identifier", name: "veilmark$bareArguments" },
+                    id: { type: "Identifier", name: "toildefender$bareArguments" },
                     init: num > 0 ? {
                         type: "CallExpression",
-                        callee: { type: "Identifier", name: "veilmark$sliceArguments" },
+                        callee: { type: "Identifier", name: "toildefender$sliceArguments" },
                         arguments: [
                             rawArgumentsIdentifier(),
-                            { type: "Literal", value: num, veilmark$removeFirstArguments: true }
+                            { type: "Literal", value: num, toildefender$removeFirstArguments: true }
                         ]
                     } : rawArgumentsIdentifier()
                 }
             ],
-            veilmark$reassigningArguments: true,
-            veilmark$followsSlicingArguments: num > 0
+            toildefender$reassigningArguments: true,
+            toildefender$followsSlicingArguments: num > 0
         });
     }
 
@@ -356,9 +356,9 @@ module.exports = class Methods {
      * Replaces direct argument references with arguments references like
      * function (a) { return a; }
      * to
-     * function (a) { return veilmark$arguments[0]; }
+     * function (a) { return toildefender$arguments[0]; }
      * @param {Function} method Function whose body will be transformed
-     * @param {boolean} useReassignedVariable Use veilmark$arguments instead of arguments
+     * @param {boolean} useReassignedVariable Use toildefender$arguments instead of arguments
      * @returns {Function} Function from method parameter
      */
     replaceArgumentReferences (method, useReassignedVariable) {
@@ -367,14 +367,14 @@ module.exports = class Methods {
         traverser.traverse(method.body, [], (node, stack) => {
             if (node.type == "Identifier") {
                 var nestedFunction = stack.some(frame => estest.isFunction(frame.node));
-                if (useReassignedVariable && node.name == "arguments" && !node.veilmark$rawArguments && !nestedFunction) {
-                    return { type: "Identifier", name: "veilmark$bareArguments" };
+                if (useReassignedVariable && node.name == "arguments" && !node.toildefender$rawArguments && !nestedFunction) {
+                    return { type: "Identifier", name: "toildefender$bareArguments" };
                 }
                 var index = getArgumentIndex(method, node);
                 if (index != -1) {
                     return {
                         type: "MemberExpression",
-                        object: { type: "Identifier", name: useReassignedVariable ? "veilmark$arguments" : "arguments" },
+                        object: { type: "Identifier", name: useReassignedVariable ? "toildefender$arguments" : "arguments" },
                         property: { type: "Literal", value: index },
                         computed: true
                     };
@@ -393,7 +393,7 @@ module.exports = class Methods {
      * Replaces function calls with main calls like
      * test()
      * to
-     * veilmark$bind(main, 1234)()
+     * toildefender$bind(main, 1234)()
      * @param {Node} ast Root node
      * @param {Object[]} methodEntryExitPoints Method entry point table
      * @param {number} methodEntryExitPoints[].entry Entry point
@@ -410,7 +410,7 @@ module.exports = class Methods {
                 var dispatcher = methodEntryExitPoints[node.name].dispatcher || "main";
                 return {
                     type: "CallExpression",
-                    callee: { type: "Identifier", name: "veilmark$bind" },
+                    callee: { type: "Identifier", name: "toildefender$bind" },
                     arguments: [
                         { type: "Identifier", name: dispatcher },
                         { type: "Identifier", name: methodEntryExitPoints[node.name].entry }
@@ -423,9 +423,9 @@ module.exports = class Methods {
 
     /**
      * Bumps all arguments indices like
-     * veilmark$arguments[0]
+     * toildefender$arguments[0]
      * to
-     * veilmark$arguments[1]
+     * toildefender$arguments[1]
      * @param {Function} method Function whose body will be transformed
      * @param {number} inc Number to be added to all argument indices
      */
@@ -434,10 +434,10 @@ module.exports = class Methods {
         assert.equal(typeof inc, "number");
         
         traverser.traverse(method.body, [], (node, stack) => {
-            if (node.type == "MemberExpression" && node.object.type == "Identifier" && node.object.name == "veilmark$arguments") {
+            if (node.type == "MemberExpression" && node.object.type == "Identifier" && node.object.name == "toildefender$arguments") {
                 node.property.value += inc;
             }
-            if (node.veilmark$removeFirstArguments) {
+            if (node.toildefender$removeFirstArguments) {
                 node.value += inc;
             }
             return node;
