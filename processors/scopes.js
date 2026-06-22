@@ -1,13 +1,9 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-
-var estest = require("../estest");
-var ESUtils = require("../esutils");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import _ from "lodash";
+import estest from "../estest.js";
+import ESUtils from "../esutils.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 function isClassMethodFunction(stack) {
     return stack.some(frame => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
@@ -150,7 +146,7 @@ function hashString32(value) {
     return h >>> 0;
 }
 
-module.exports = class Scopes {
+export default class Scopes {
 
     constructor (logger) {
         this.logger = logger;

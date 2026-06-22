@@ -1,11 +1,8 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-var estest = require("../estest");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import _ from "lodash";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 const KEYWORDS = ["await","break","case","catch","class","const","continue","debugger","default","delete","do","else","enum","export","extends","finally","for","function","if","implements","import","in","instanceof","interface","let","new","package","private","protected","public","return","static","super","switch","this","throw","try","typeof","var","void","while","with","yield"];
 
@@ -40,7 +37,7 @@ function containsLexicalDeclaration(node) {
     return found;
 }
 
-module.exports = class DeadCode {
+export default class DeadCode {
 
     constructor (logger) {
         this.logger = logger;

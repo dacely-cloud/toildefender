@@ -1,11 +1,8 @@
-"use strict";
+import assert from "assert";
+import estest from "./estest.js";
+import traverser from "./traverser.js";
 
-var assert = require("assert");
-
-var estest = require("./estest");
-var traverser = require("./traverser");
-
-module.exports = function (logger) {
+export default function (logger) {
     
     this.setParents = function (node) {
         assert.ok(estest.isNode(node));

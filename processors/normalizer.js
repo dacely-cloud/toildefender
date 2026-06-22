@@ -1,12 +1,8 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-
-var utils = require("../utils");
-var traverser = require("../traverser");
-var estest = require("../estest");
+import assert from "assert";
+import _ from "lodash";
+import utils from "../utils.js";
+import traverser from "../traverser.js";
+import estest from "../estest.js";
 
 /**
  * Chain an array of expressions with an operator.
@@ -681,7 +677,7 @@ function blockNeedsLexicalScope(node) {
     return needsScope;
 }
 
-module.exports = class Normalizer {
+export default class Normalizer {
 
     constructor (logger) {
         this.logger = logger;

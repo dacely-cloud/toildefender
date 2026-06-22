@@ -1,15 +1,10 @@
-"use strict";
+import assert from "assert";
+import _ from "lodash";
+import escodegen from "escodegen";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
 
-var assert = require("assert");
-
-var _ = require("lodash");
-var escodegen = require("escodegen");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
-
-
-module.exports = class Health {
+export default class Health {
 
     constructor (logger) {
         this.logger = logger;

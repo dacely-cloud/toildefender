@@ -1,15 +1,11 @@
-"use strict";
-
-var assert = require("assert");
-var path = require("path");
-
-var _ = require("lodash");
-var escope = require("escope");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
-var ESUtils = require("../esutils");
-var utils = require("../utils");
+import assert from "assert";
+import path from "path";
+import _ from "lodash";
+import escope from "escope";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
+import ESUtils from "../esutils.js";
+import utils from "../utils.js";
 
 /**
  * Transform calls to require().
@@ -78,7 +74,7 @@ function resolvePath(curr, path) {
     return normalizePath(getPathDir(curr) + "/" + path);
 }
 
-module.exports = class Modules {
+export default class Modules {
 
     constructor (logger) {
         this.logger = logger;

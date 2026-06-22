@@ -1,10 +1,7 @@
-"use strict";
-
-const assert = require("node:assert/strict");
-const test = require("node:test");
-const vm = require("node:vm");
-
-const toildefender = require("../toildefender");
+import assert from "node:assert/strict";
+import test from "node:test";
+import vm from "node:vm";
+import toildefender from "../toildefender.js";
 
 const FEATURES = {
     dead_code: true,

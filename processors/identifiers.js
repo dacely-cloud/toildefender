@@ -1,13 +1,9 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-
-var estest = require("../estest");
-var ESUtils = require("../esutils");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import _ from "lodash";
+import estest from "../estest.js";
+import ESUtils from "../esutils.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 function literal(value) {
     return { type: "Literal", value: value };
@@ -44,7 +40,7 @@ function isNumericVmInternalFunction(stack) {
     return stack.some(frame => frame.node && frame.node.toildefender$numericVmInternal === true);
 }
 
-module.exports = class Identifiers {
+export default class Identifiers {
 
     constructor (logger) {
         this.logger = logger;

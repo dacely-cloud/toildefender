@@ -1,13 +1,9 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-
-var estest = require("../estest");
-var ESUtils = require("../esutils");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import _ from "lodash";
+import estest from "../estest.js";
+import ESUtils from "../esutils.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 function isReferenceIdentifier(node, stack) {
     var parentFrame = stack[1];
@@ -95,7 +91,7 @@ function isNumericVmInternalVariable(variable) {
     return variable.defs.some(def => isNumericVmInternalNode(def.node));
 }
 
-module.exports = class Variables {
+export default class Variables {
 
     constructor (logger) {
         this.logger = logger;

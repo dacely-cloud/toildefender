@@ -1,11 +1,8 @@
-"use strict";
-
-var assert = require("assert");
-var crypto = require("crypto");
-var esprima = require("esprima");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
+import assert from "assert";
+import crypto from "crypto";
+import esprima from "esprima";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
 
 var RUNTIME = `
 function toildefender$numericVmString(program, length, salt) {
@@ -1154,7 +1151,7 @@ function resolveOptions(options) {
     }, options || {});
 }
 
-module.exports = class NumericVm {
+export default class NumericVm {
     constructor(logger, options) {
         this.logger = logger;
         this.options = resolveOptions(options);

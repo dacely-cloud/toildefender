@@ -1,40 +1,36 @@
-"use strict";
+import assert from "assert";
+import _ from "lodash";
+import escodegen from "escodegen";
+import esprima from "esprima";
+import traverser from "./traverser.js";
 
-var assert = require("assert");
-
-var _ = require("lodash");
-var escodegen = require("escodegen");
-var esprima = require("esprima");
-
-var traverser = require("./traverser");
-
-exports.splice = function (arr, pos, del, elems) {
+export function splice(arr, pos, del, elems) {
     Array.prototype.splice.apply(arr, [ pos, del ].concat(elems));
-};
+}
 
-exports.unshift = function (arr, arr2) {
+export function unshift(arr, arr2) {
     if (Array.isArray(arr2)) {
         Array.prototype.unshift(arr, arr2);
     } else {
         arr.push(arr2);
     }
-};
+}
 
-exports.push = function (arr, arr2) {
+export function push(arr, arr2) {
     if (Array.isArray(arr2)) {
         Array.prototype.push.apply(arr, arr2);
     } else {
         arr.push(arr2);
     }
-};
+}
 
-exports.array = function (obj) {
+export function array(obj) {
     return Array.isArray(obj) ? obj : [ obj ];
-};
+}
 
-exports.cloneISwearIKnowWhatImDoing = function (obj) {
+export function cloneISwearIKnowWhatImDoing(obj) {
     return JSON.parse(JSON.stringify(obj));
-};
+}
 
 /**
  * Generate a random number.
@@ -42,11 +38,11 @@ exports.cloneISwearIKnowWhatImDoing = function (obj) {
  * @param {number} Inclusive maximum
  * @returns {number}
  */
-exports.random = function (minimum, maximum) {
+export function random(minimum, maximum) {
     return Math.floor(Math.random() * (maximum - minimum)) + minimum;
-};
+}
 
-exports.randomAlpha = function (length) {
+export function randomAlpha(length) {
     var text = "";
     var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -55,15 +51,15 @@ exports.randomAlpha = function (length) {
     }
 
     return text;
-};
+}
 
-exports.isResolvedReference = function (reference) {
+export function isResolvedReference(reference) {
     return reference.resolved != null
         && reference.resolved.defs != null
         && reference.resolved.defs.length > 0;
-};
+}
 
-exports.UniqueRandom = function(max) {
+export function UniqueRandom(max) {
     assert(typeof max == "number");
     if (max > 32768) {
         console.warn(`Allocating large (${max}) UniqueRandom instance`);
@@ -78,19 +74,19 @@ exports.UniqueRandom = function(max) {
             throw new Error("No numbers left");
         }
     };
-};
+}
 
-exports.UniqueRandomAlpha = function (len) {
+export function UniqueRandomAlpha(len) {
     assert(typeof len == "number");
     var offset = Math.pow(32, len - 1);
-    var rng = new exports.UniqueRandom(offset * 31);
+    var rng = new UniqueRandom(offset * 31);
     
     this.get = function() {
         return (offset + rng.get()).toString(32);  
     };
-};
+}
 
-exports.HashMap = function () {
+export function HashMap() {
     var store = {};
     
     this.get = function (key) {
@@ -108,9 +104,9 @@ exports.HashMap = function () {
     this.remove = function (key) {
         delete store["HashMap" + key];
     };
-};
+}
 
-exports.hash = function (obj) {
+export function hash(obj) {
     if (obj == null) {
         return "x";
     }
@@ -127,9 +123,24 @@ exports.hash = function (obj) {
         Object.defineProperty(obj, "$$hash", {
             configurable: false,
             enumerable: false,
-            value: "o" + exports.randomAlpha(8)
+            value: "o" + randomAlpha(8)
         });
     }
     
     return obj.$$hash;
+}
+
+export default {
+    splice,
+    unshift,
+    push,
+    array,
+    cloneISwearIKnowWhatImDoing,
+    random,
+    randomAlpha,
+    isResolvedReference,
+    UniqueRandom,
+    UniqueRandomAlpha,
+    HashMap,
+    hash
 };

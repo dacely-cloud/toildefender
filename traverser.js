@@ -1,11 +1,7 @@
-"use strict";
-
-var assert = require("assert");
-
-var estraverse = require("estraverse");
-
-var estest = require("./estest");
-var utils = require("./utils");
+import assert from "assert";
+import estraverse from "estraverse";
+import estest from "./estest.js";
+import utils from "./utils.js";
 
 var VISITOR_KEYS = Object.assign({}, estraverse.VisitorKeys, {
     ChainExpression: [ "expression" ],
@@ -14,20 +10,20 @@ var VISITOR_KEYS = Object.assign({}, estraverse.VisitorKeys, {
 });
 
 // Depth-first
-exports.traverse = function (node, stack, processor) {
+export function traverse(node, stack, processor) {
     assert.ok(estest.isNode(node));
     assert.ok(Array.isArray(stack));
     assert.equal(typeof processor, "function");
     
-    exports.visitChildren(node, (child, key) => {
-        return exports.traverse(child, [ { node: node, key: key } ].concat(stack), processor);
+    visitChildren(node, (child, key) => {
+        return traverse(child, [ { node: node, key: key } ].concat(stack), processor);
     });
     
     return processor(node, [ { node: node } ].concat(stack));
-};
+}
 
 // Breadth-first
-exports.traverseEx = function (node, stack, processor) {
+export function traverseEx(node, stack, processor) {
     assert.ok(estest.isNode(node));
     assert.ok(Array.isArray(stack));
     assert.equal(typeof processor, "function");
@@ -40,7 +36,7 @@ exports.traverseEx = function (node, stack, processor) {
     };
     
     var queue = [];
-    exports.visitChildrenEx(node, (child, key) => {
+    visitChildrenEx(node, (child, key) => {
         var repl = processor.call(controller, child, [ { node: node } ].concat(stack));
         if (repl == child) {
             queue.push({
@@ -52,14 +48,21 @@ exports.traverseEx = function (node, stack, processor) {
     });
     if (!abort) {
         queue.every(elem => {
-            exports.traverseEx.call(controller, elem.child, [ { node: node, key: elem.key } ].concat(stack), processor);
+            traverseEx.call(controller, elem.child, [ { node: node, key: elem.key } ].concat(stack), processor);
             return !abort;
         });
     }
     return node;
+}
+
+export default {
+    traverse,
+    traverseEx,
+    visitChildren,
+    visitChildrenEx
 };
 
-exports.visitChildren = function (node, processor) {
+export function visitChildren(node, processor) {
     assert.ok(estest.isNode(node));
     assert.equal(typeof processor, "function");
     
@@ -80,9 +83,9 @@ exports.visitChildren = function (node, processor) {
             node[key] = repl;
         }
     });
-};
+}
 
-exports.visitChildrenEx = function (node, processor) {
+export function visitChildrenEx(node, processor) {
     assert.ok(estest.isNode(node));
     assert.equal(typeof processor, "function");
     
@@ -118,4 +121,4 @@ exports.visitChildrenEx = function (node, processor) {
             }
         }
     });
-};
+}

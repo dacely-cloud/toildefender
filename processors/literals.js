@@ -1,12 +1,8 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import _ from "lodash";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 /**
  * Generate string generator from string.
@@ -220,7 +216,7 @@ function makeRegexExpression(node) {
     };
 }
 
-module.exports = class Literals {
+export default class Literals {
 
     constructor (logger) {
         this.logger = logger;

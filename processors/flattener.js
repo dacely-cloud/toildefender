@@ -1,13 +1,9 @@
-"use strict";
-
-var assert = require("assert");
-var events = require("events");
-
-var _ = require("lodash");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import events from "events";
+import _ from "lodash";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 /**
  * Push a SwitchCase onto an array while removing all identical SwitchCases
@@ -104,7 +100,7 @@ function splitBlocks(nodes) {
     return output;
 }
 
-module.exports = class Flattener {
+export default class Flattener {
 
     constructor (logger, rng) {
         this.logger = logger;

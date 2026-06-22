@@ -1,9 +1,6 @@
-"use strict";
-
-const assert = require("node:assert/strict");
-const test = require("node:test");
-
-const Preprocessing = require("../processors/preprocessing");
+import assert from "node:assert/strict";
+import test from "node:test";
+import Preprocessing from "../processors/preprocessing.js";
 
 function preprocess(code, variables = {}) {
     const processor = new Preprocessing({ warn () {} });

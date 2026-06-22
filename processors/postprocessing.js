@@ -1,12 +1,8 @@
-"use strict";
-
-var assert = require("assert");
-
-var _ = require("lodash");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import _ from "lodash";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 /**
  * Merges nested bind calls like
@@ -39,7 +35,7 @@ function isBindCall(node) {
         && node.callee.name == "toildefender$bind";
 }
 
-module.exports = class Postprocessing {
+export default class Postprocessing {
 
     constructor (logger) {
         this.logger = logger;

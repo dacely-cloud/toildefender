@@ -1,8 +1,5 @@
-"use strict";
-
-var _ = require("lodash");
-
-var { Parser: Parser } = require("expr-eval-fork");
+import _ from "lodash";
+import {Parser} from "expr-eval-fork";
 
 const DEFAULT_PREPROCESSOR_VARIABLES = {
     "true": 1,
@@ -162,7 +159,7 @@ class ElseBlockNode extends BlockNode {
     }
 }
 
-module.exports = class Preprocessing {
+export default class Preprocessing {
 
     constructor (logger) {
         this.logger = logger;

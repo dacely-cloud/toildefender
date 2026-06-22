@@ -1,5 +1,5 @@
 
-module.exports = function (adapter) {
+export default function (adapter) {
     
     adapter = adapter || function (level, args) {
         console.log(level + ": " + JSON.stringify(args));

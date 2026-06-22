@@ -1,5 +1,3 @@
-"use strict";
-
 const METHODS_INJECT = `
 function toildefender$mergeArguments(a, b) {
     return Array.prototype.slice.call(a).concat(Array.prototype.slice.call(b));
@@ -82,16 +80,14 @@ function toildefender$fromCharCodes() {
 
 `;
 
-var assert = require("assert");
-var fs = require("fs");
-
-var _ = require("lodash");
-var escope = require("escope");
-var esprima = require("esprima");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
-var utils = require("../utils");
+import assert from "assert";
+import fs from "fs";
+import _ from "lodash";
+import escope from "escope";
+import esprima from "esprima";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
+import utils from "../utils.js";
 
 const ANON_METHOD_ID = "toildefender$anonymousMethodId";
 
@@ -219,7 +215,7 @@ function rawArgumentsIdentifier() {
     };
 }
 
-module.exports = class Methods {
+export default class Methods {
 
     constructor (logger) {
         this.logger = logger;

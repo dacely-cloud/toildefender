@@ -1,12 +1,8 @@
-"use strict";
-
-var assert = require("assert");
-
-var esshorten = require("esshorten");
-var escope = require("escope");
-
-var estest = require("../estest");
-var traverser = require("../traverser");
+import assert from "assert";
+import esshorten from "esshorten";
+import escope from "escope";
+import estest from "../estest.js";
+import traverser from "../traverser.js";
 
 var RESERVED_WORDS = new Set([
     "await",
@@ -220,7 +216,7 @@ function modernMangle(ast) {
     return ast;
 }
 
-module.exports = class Uglifier {
+export default class Uglifier {
 
     constructor (logger) {
         this.logger = logger;

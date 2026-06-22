@@ -1,43 +1,39 @@
 /** @module toildefender */
 
-"use strict";
+import fs from "fs";
+import assert from "assert";
+import { createRequire } from "node:module";
+import * as modernParser from "@babel/parser";
+import _ from "lodash";
+import escodegen from "escodegen";
+import escope from "escope";
+import esprima from "esprima";
+import traverser from "./traverser.js";
+import utils from "./utils.js";
+import Logger from "./logger.js";
+import prDeadCode from "./processors/deadCode.js";
+import prModules from "./processors/modules.js";
+import prMethods from "./processors/methods.js";
+import prVariables from "./processors/variables.js";
+import prScopes from "./processors/scopes.js";
+import prFlattener from "./processors/flattener.js";
+import prNormalizer from "./processors/normalizer.js";
+import prPreprocessing from "./processors/preprocessing.js";
+import prPostprocessing from "./processors/postprocessing.js";
+import prUglifier from "./processors/uglifier.js";
+import prIdentifiers from "./processors/identifiers.js";
+import prLiterals from "./processors/literals.js";
+import prNumericVm from "./processors/numericVm.js";
+import prHealth from "./processors/health.js";
 
-var fs = require("fs");
-var assert = require("assert");
-
-var _ = require("lodash");
+const optionalRequire = createRequire(import.meta.url);
 function requireOptional(name) {
     try {
-        return require(name);
+        return optionalRequire(name);
     } catch (e) {
         return null;
     }
 }
-
-var modernParser = requireOptional("@babel/parser");
-var escodegen = require("escodegen");
-var escope = require("escope");
-var esprima = require("esprima");
-
-var traverser = require("./traverser");
-var utils = require("./utils");
-
-var Logger = require("./logger");
-
-var prDeadCode          = require("./processors/deadCode");
-var prModules           = require("./processors/modules");
-var prMethods           = require("./processors/methods");
-var prVariables         = require("./processors/variables");
-var prScopes            = require("./processors/scopes");
-var prFlattener         = require("./processors/flattener");
-var prNormalizer        = require("./processors/normalizer");
-var prPreprocessing     = require("./processors/preprocessing");
-var prPostprocessing    = require("./processors/postprocessing");
-var prUglifier          = require("./processors/uglifier");
-var prIdentifiers       = require("./processors/identifiers");
-var prLiterals          = require("./processors/literals");
-var prNumericVm         = require("./processors/numericVm");
-var prHealth            = require("./processors/health");
 
 var defaultOptions = {
     babel: false,
@@ -168,7 +164,7 @@ var featureDescs = {
     }
 };
 
-exports.features = _.fromPairs(
+export var features = _.fromPairs(
     _.map(defaultOptions.features, (enabled, feature) =>
         [
             feature,
@@ -217,7 +213,7 @@ exports.features = _.fromPairs(
  *      }
  * });
  */
-exports.do = function (options) {
+export function protect(options) {
     /**
      * Annotates potentially thrown errors with a label
      */
@@ -284,7 +280,7 @@ exports.do = function (options) {
         if (modernBabel) {
             var presetEnvPath;
             try {
-                presetEnvPath = require.resolve("@babel/preset-env");
+                presetEnvPath = optionalRequire.resolve("@babel/preset-env");
             } catch (e) {
                 throw new Error("Babel transform requested, but @babel/preset-env is not installed");
             }
@@ -342,7 +338,7 @@ exports.do = function (options) {
                 "babel-plugin-transform-es2015-template-literals",
                 //"babel-plugin-transform-es2015-typeof-symbol",
                 "babel-plugin-transform-es2015-unicode-regex"
-            ].map(require.resolve)
+            ].map(optionalRequire.resolve)
         };
         return legacyBabel.transform(code, babelOptions).code;
     }
@@ -791,4 +787,9 @@ exports.do = function (options) {
         code: result.code || result,
         map: result.map && result.map.toString()
     };
-};
+}
+
+const api = { features, protect, do: protect };
+
+export { protect as do };
+export default api;

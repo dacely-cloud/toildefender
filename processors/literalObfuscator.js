@@ -1,10 +1,7 @@
-"use strict";
+import assert from "assert";
+import esprima from "esprima";
 
-var assert = require("assert");
-
-var esprima = require("esprima");
-
-module.exports = class LiteralObfuscator {
+export default class LiteralObfuscator {
 
     constructor (logger) {
         this.logger = logger;

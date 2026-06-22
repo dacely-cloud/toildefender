@@ -80,6 +80,7 @@
     },
     "license": "AGPL-3.0",
     "devDependencies": {
-        "playwright": "^1.61.0"
+        "playwright": "^1.61.0",
+        "vite": "^8.0.16"
     }
 }

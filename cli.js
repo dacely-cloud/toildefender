@@ -1,14 +1,10 @@
-"use strict";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import _ from "lodash";
+import toildefender from "./obfuscator.js";
 
-var fs = require("fs");
-var os = require("os");
-var path = require("path");
-
-var _ = require("lodash");
-
-var toildefender = require("./obfuscator");
-
-exports.run = function () {
+export function run() {
 
     var argv = require("minimist")(process.argv.slice(2));
     if (argv.help) {
@@ -165,4 +161,4 @@ exports.run = function () {
         }
     }
 
-};
+}
