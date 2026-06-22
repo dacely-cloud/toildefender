@@ -115,12 +115,17 @@ function toildefender$numericVmRun(program, base, tokenCount, seed, tag, constan
         meshSalt = mesh[5] >>> 0;
     }
     var encryptedCache = cache && cache[0] || null;
-    var stateCache = [seed >>> 0];
-    var plainCache = new Array(tokenCount);
+    var plainCache = cache && cache[2] || null;
+    var stateCache = cache && cache[3] || null;
+    var decodedReady = cache && cache[4] === tag && plainCache && stateCache;
     var inverseCache = cache && cache[1] || null;
     if (inverseCache === null) {
         inverseCache = [];
         if (cache) cache[1] = inverseCache;
+    }
+    if (!decodedReady) {
+        plainCache = new Array(tokenCount);
+        stateCache = [seed >>> 0];
     }
 
     function inverse(value, modulo) {
@@ -166,16 +171,26 @@ function toildefender$numericVmRun(program, base, tokenCount, seed, tag, constan
         return encryptedCache[index];
     }
 
-    var i = 0;
-    var seen = seed >>> 0;
-    while (i < tokenCount) {
-        var encrypted = encryptedAt(i);
-        seen = mix(seen, encrypted, i);
-        stateCache[i + 1] = seen;
-        i += 1;
-    }
+    if (!decodedReady) {
+        var i = 0;
+        var seen = seed >>> 0;
+        while (i < tokenCount) {
+            var encrypted = encryptedAt(i);
+            var mul = 1 + ((seen >>> 5) % (base - 1));
+            var add = seen % base;
+            plainCache[i] = (((encrypted - add + base) % base) * inverse(mul, base)) % base;
+            seen = mix(seen, encrypted, i);
+            stateCache[i + 1] = seen;
+            i += 1;
+        }
 
-    if ((seen >>> 0) !== (tag >>> 0)) throw new Error("invalid numeric vm program");
+        if ((seen >>> 0) !== (tag >>> 0)) throw new Error("invalid numeric vm program");
+        if (cache) {
+            cache[2] = plainCache;
+            cache[3] = stateCache;
+            cache[4] = tag;
+        }
+    }
 
     function stateBefore(index) {
         if (stateCache[index] !== undefined) return stateCache[index];

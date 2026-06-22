@@ -840,6 +840,104 @@ test("control-flow ratio can avoid dispatcher flattening", () => {
     assert.deepEqual(run(skipped), run(code));
 });
 
+test("control-flow call replacement leaves generated declaration identifiers intact", () => {
+    const code = `
+        function outer(seed) {
+            const make = function (value) {
+                return function (extra) {
+                    return seed + value + extra;
+                };
+            };
+            return make(4);
+        }
+        const fn = outer(3);
+        globalThis.__result = [fn(5), (function (x) { return x * 2; })(6)];
+    `;
+    const defended = defendCode(code, {
+        forceFeatures: {
+            dead_code: false,
+            scope: true,
+            control_flow: true,
+            identifiers: true,
+            numeric_vm: false,
+            object_packing: false,
+            literals: true,
+            mangle: true,
+            compress: true
+        },
+        controlFlow: {
+            ratio: 1,
+            seed: "generated-declaration-reference-test"
+        },
+        scope: {
+            ratio: 1,
+            seed: "generated-declaration-reference-test"
+        }
+    });
+
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("control-flow emits direct dispatcher calls for immediate calls", () => {
+    const code = `
+        function add(a, b) {
+            return a + b;
+        }
+        function invoke(fn, value) {
+            return fn(value);
+        }
+        globalThis.__result = [add(2, 3), invoke(function (x) { return x * 2; }, 6)];
+    `;
+    const defended = defendCode(code, {
+        forceFeatures: {
+            dead_code: false,
+            scope: true,
+            control_flow: true,
+            identifiers: false,
+            numeric_vm: false,
+            object_packing: false,
+            literals: false,
+            mangle: false,
+            compress: false
+        },
+        controlFlow: {
+            ratio: 1,
+            seed: "direct-dispatch-call-test"
+        }
+    });
+
+    assert.doesNotMatch(defended, /toildefender\$bind\(main,\s*\d+\)\(/);
+    assert.deepEqual(run(defended), run(code));
+});
+
+test("method extraction keeps immediately invoked function expressions dispatchable", () => {
+    const code = `
+        globalThis.__result = (function (x) {
+            return x * 2;
+        })(6);
+    `;
+    const defended = defendCode(code, {
+        forceFeatures: {
+            dead_code: false,
+            scope: true,
+            control_flow: true,
+            identifiers: false,
+            numeric_vm: false,
+            object_packing: false,
+            literals: false,
+            mangle: false,
+            compress: false
+        },
+        controlFlow: {
+            ratio: 1,
+            seed: "iife-direct-dispatch-test"
+        }
+    });
+
+    assert.doesNotMatch(defended, /toildefender\$bind\(main/);
+    assert.deepEqual(run(defended), run(code));
+});
+
 test("scope ratio keeps generated literal table reachable under control flow", () => {
     const code = `
         function readValue() {

@@ -1,19 +1,64 @@
 const METHODS_INJECT = `
 function toildefender$mergeArguments(a, b) {
-    return Array.prototype.slice.call(a).concat(Array.prototype.slice.call(b));
+    var aLength = a.length >>> 0;
+    var bLength = b.length >>> 0;
+    var out = new Array(aLength + bLength);
+    var i = 0;
+    while (i < aLength) {
+        out[i] = a[i];
+        i += 1;
+    }
+    var j = 0;
+    while (j < bLength) {
+        out[aLength + j] = b[j];
+        j += 1;
+    }
+    return out;
 }
 
 function toildefender$bind() {
-    var fn = arguments[0], prepend = Array.prototype.slice.call(arguments, 1);
+    var fn = arguments[0];
+    var prependLength = arguments.length - 1;
+    var prepend = new Array(prependLength);
+    var i = 0;
+    while (i < prependLength) {
+        prepend[i] = arguments[i + 1];
+        i += 1;
+    }
     var wrapper = function() {
-        return fn.apply(this, prepend.concat(Array.prototype.slice.call(arguments)));
+        var extraLength = arguments.length;
+        if (extraLength === 0) {
+            return fn.apply(this, prepend);
+        }
+        var args = new Array(prependLength + extraLength);
+        var i = 0;
+        while (i < prependLength) {
+            args[i] = prepend[i];
+            i += 1;
+        }
+        var j = 0;
+        while (j < extraLength) {
+            args[prependLength + j] = arguments[j];
+            j += 1;
+        }
+        return fn.apply(this, args);
     };
     wrapper.prototype = fn.prototype;
     return wrapper;
 }
 
 function toildefender$sliceArguments(args, num) {
-    return Array.prototype.slice.call(args, num);
+    var length = args.length >>> 0;
+    if (num >= length) {
+        return [];
+    }
+    var out = new Array(length - num);
+    var i = num;
+    while (i < length) {
+        out[i - num] = args[i];
+        i += 1;
+    }
+    return out;
 }
 
 var toildefender$objectKeys = {};
@@ -278,6 +323,10 @@ function isClassMethodFunction(stack: AstStackFrame[]): boolean {
     return stack.some((frame: AstStackFrame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
 }
 
+function isCallExpressionCallee(stack: AstStackFrame[]): boolean {
+    return stack[1]?.node.type == "CallExpression" && stack[1].key == "callee";
+}
+
 function isNumericVmInternalFunction(node: AstNode, stack: AstStackFrame[]): boolean {
     return nodeFlag(node, "toildefender$numericVmInternal")
         || stack.some((frame: AstStackFrame) => nodeFlag(frame.node, "toildefender$numericVmInternal"));
@@ -438,6 +487,9 @@ export default class Methods {
                     id: { type: "Identifier", name: id }
                 });
                 methods.push(node);
+                if (isCallExpressionCallee(stack)) {
+                    return { type: "Identifier", name: id };
+                }
                 return createMethodStub({ type: "Identifier", name: id });
             }
             
@@ -499,6 +551,28 @@ export default class Methods {
         
         traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isNumericVmInternalFunction(node, stack)) {
+                return node;
+            }
+            if (node.type == "CallExpression") {
+                const callee = childNode(node, "callee");
+                const name = callee ? nodeName(callee) : undefined;
+                const entryPoint = name ? methodEntryExitPoints[name] : undefined;
+                if (callee?.type == "Identifier" && entryPoint?.entry) {
+                    const dispatcher = entryPoint.dispatcher || "main";
+                    return {
+                        type: "CallExpression",
+                        callee: { type: "Identifier", name: dispatcher },
+                        arguments: [
+                            { type: "Identifier", name: entryPoint.entry },
+                            ...astArray(nodeFields(node).arguments)
+                        ]
+                    };
+                }
+            }
+            if (node.type == "Identifier" && !isReferenceIdentifier(node, stack)) {
+                return node;
+            }
+            if (node.type == "Identifier" && stack[1]?.node.type == "CallExpression" && stack[1].key == "callee") {
                 return node;
             }
             const name = nodeName(node);
