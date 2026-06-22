@@ -3,7 +3,7 @@ import crypto from "crypto";
 import * as esprima from "esprima";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
 
 const RUNTIME = `
 function toildefender$numericVmString(program, length, salt) {
@@ -339,21 +339,166 @@ const OP_NAMES = [
     "JMP_TRUE", "CALL_EXT", "CALL_LOCAL", "GET_PROP", "SET_PROP", "MAKE_ARRAY",
     "MAKE_OBJECT", "RETURN", "THROW", "PUSH_THIS", "PUSH_ARGUMENTS", "TYPEOF",
     "CALL_METHOD", "GET_CONST_PROP", "STORE_LOCAL_POP", "JMP_NULLISH", "TO_NUMBER"
-];
+] as const;
+
+type OpName = typeof OP_NAMES[number];
+type MeshValue = number | MeshValue[];
+type ScopeMap = Record<string, number>;
+
+interface Dialect {
+    base: number;
+    next: () => number;
+    opcodes: Record<OpName, number>;
+    seed: number;
+}
+
+interface HashMeshOptions {
+    bindToVmState?: boolean;
+    chaffRatio?: number;
+    deriveDialectFromMesh?: boolean;
+    enabled?: boolean;
+    encodeChaff?: boolean;
+    mode?: string;
+    serverBound?: boolean;
+    unlock?: string;
+}
+
+interface NumericVmResolvedOptions {
+    enabled: boolean;
+    excludeNames: string[];
+    hashMesh: HashMeshOptions;
+    maxFunctionSize: number;
+    maxFunctions: number;
+    minFunctionSize: number;
+    mode: string;
+    ratio: number;
+    seed: string;
+    virtualize: string;
+}
+
+interface ConstantEntry {
+    kind: string;
+    value: unknown;
+}
+
+interface Instruction {
+    args: Array<number | string>;
+    label?: string;
+    op?: OpName;
+}
+
+interface EncryptedStream {
+    encrypted: number[];
+    tag: number;
+}
+
+interface ProgramRecord {
+    base: number;
+    blob: bigint;
+    constants: AstNode[];
+    mesh?: MeshValue[];
+    opValues: AstNode[];
+    references: AstNode[];
+    seed: number;
+    tag: number;
+    tokenCount: number;
+}
+
+interface VmCallRefs {
+    cache?: AstNode;
+    constants?: AstNode;
+    mesh?: AstNode;
+    ops?: AstNode;
+}
 
 const BASES = [257, 263, 269, 521, 1031, 4099, 65537];
 const SMALL_LIMIT = 128;
 
-function literal(value: Loose) { return { type: "Literal", value: value }; }
-function identifier(name: Loose) { return { type: "Identifier", name: name }; }
-function call(callee: Loose, args: Loose) { return { type: "CallExpression", callee: callee, arguments: args }; }
-function binary(operator: Loose, left: Loose, right: Loose) { return { type: "BinaryExpression", operator: operator, left: left, right: right }; }
-function unary(operator: Loose, argument: Loose) { return { type: "UnaryExpression", operator: operator, prefix: true, argument: argument }; }
-function member(object: Loose, property: Loose) { return { type: "MemberExpression", object: object, property: property, computed: true }; }
-function arrayExpression(values: Loose) { return { type: "ArrayExpression", elements: values }; }
-function returnStatement(argument: Loose) { return { type: "ReturnStatement", argument: argument }; }
-function functionExpression(body: Loose) { return { type: "FunctionExpression", id: null, params: [], body: { type: "BlockStatement", body: body }, generator: false, expression: false, async: false }; }
-function variableDeclaration(name: Loose, init: Loose) {
+function nodeFields(node: AstNode): Record<string, unknown> {
+    return node as unknown as Record<string, unknown>;
+}
+
+function nodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = nodeFields(node)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function requiredChild(node: AstNode, key: string): AstNode {
+    const child = childNode(node, key);
+    assert.ok(child, `Missing ${node.type}.${key}`);
+    return child;
+}
+
+function setNodeField(node: AstNode, key: string, value: unknown): void {
+    nodeFields(node)[key] = value;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function nodeValue(node: AstNode | null): unknown {
+    return (node as { value?: unknown } | null)?.value;
+}
+
+function nodeOperator(node: AstNode): string | null {
+    const operator = (node as { operator?: unknown }).operator;
+    return typeof operator == "string" ? operator : null;
+}
+
+function nodeKind(node: AstNode): string | null {
+    const kind = (node as { kind?: unknown }).kind;
+    return typeof kind == "string" ? kind : null;
+}
+
+function nodeFlag(node: AstNode, key: "async" | "computed" | "generator" | "toildefender$noNumericVm" | "toildefender$numericVmInternal"): boolean {
+    return (node as Record<string, unknown>)[key] === true;
+}
+
+function bodyArray(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).body);
+}
+
+function nodeParams(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).params);
+}
+
+function nodeDeclarations(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).declarations);
+}
+
+function nodeElements(node: AstNode): Array<AstNode | null> {
+    const elements = nodeFields(node).elements;
+    return Array.isArray(elements) ? elements.map((element: unknown) => estest.isNode(element) ? element : null) : [];
+}
+
+function nodeProperties(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).properties);
+}
+
+function nodeExpressions(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).expressions);
+}
+
+function nodeArguments(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).arguments);
+}
+
+function literal(value: unknown): AstNode { return { type: "Literal", value: value }; }
+function identifier(name: string): AstNode { return { type: "Identifier", name: name }; }
+function call(callee: AstNode, args: AstNode[]): AstNode { return { type: "CallExpression", callee: callee, arguments: args }; }
+function binary(operator: string, left: AstNode, right: AstNode): AstNode { return { type: "BinaryExpression", operator: operator, left: left, right: right }; }
+function unary(operator: string, argument: AstNode): AstNode { return { type: "UnaryExpression", operator: operator, prefix: true, argument: argument }; }
+function member(object: AstNode, property: AstNode): AstNode { return { type: "MemberExpression", object: object, property: property, computed: true }; }
+function arrayExpression(values: AstNode[]): AstNode { return { type: "ArrayExpression", elements: values }; }
+function returnStatement(argument: AstNode): AstNode { return { type: "ReturnStatement", argument: argument }; }
+function functionExpression(body: AstNode[]): AstNode { return { type: "FunctionExpression", id: null, params: [], body: { type: "BlockStatement", body: body }, generator: false, expression: false, async: false }; }
+function variableDeclaration(name: string, init: AstNode): AstNode {
     return {
         type: "VariableDeclaration",
         kind: "var",
@@ -366,22 +511,25 @@ function variableDeclaration(name: Loose, init: Loose) {
         ]
     };
 }
-function functionName(node: Loose) { return node.id && node.id.name ? node.id.name : ""; }
 
-function markNumericVmInternal(ast: Loose) {
-    return traverser.traverse(ast, [], function (node: Loose) {
+function functionName(node: AstNode): string {
+    return nodeName(childNode(node, "id")) || "";
+}
+
+function markNumericVmInternal(ast: AstNode): AstNode {
+    return traverser.traverse(ast, [], function (node: AstNode) {
         if (estest.isFunction(node)) {
-            node.toildefender$numericVmInternal = true;
+            setNodeField(node, "toildefender$numericVmInternal", true);
         }
         return node;
     });
 }
 
-function hashSeed(seed: Loose) {
+function hashSeed(seed: unknown): number {
     return crypto.createHash("sha256").update(String(seed)).digest().readUInt32LE(0) || 1;
 }
 
-function makeRng(seed: Loose) {
+function makeRng(seed: number): () => number {
     let state = seed >>> 0;
     return function () {
         state ^= state << 13; state >>>= 0;
@@ -391,7 +539,7 @@ function makeRng(seed: Loose) {
     };
 }
 
-function shuffle(values: Loose, next: Loose) {
+function shuffle<T>(values: T[], next: () => number): T[] {
     const copy = values.slice();
     for (let i = copy.length - 1; i > 0; i -= 1) {
         const j = next() % (i + 1);
@@ -402,32 +550,36 @@ function shuffle(values: Loose, next: Loose) {
     return copy;
 }
 
-function bigintLiteral(value: Loose) {
+function bigintLiteral(value: bigint | number): AstNode {
     const bigint = typeof value === "bigint" ? value : BigInt(value);
     const raw = bigint.toString();
     return { type: "Literal", value: bigint, bigint: raw, raw: raw + "n" };
 }
 
-function replaceStaticBigIntCalls(ast: Loose) {
-    return traverser.traverse(ast, [], function (node: Loose) {
+function replaceStaticBigIntCalls(ast: AstNode): AstNode {
+    return traverser.traverse(ast, [], function (node: AstNode) {
+        const callee = childNode(node, "callee");
+        const args = nodeArguments(node);
+        const firstArg = args[0];
+        const firstValue = nodeValue(firstArg);
         if (node.type === "CallExpression"
-            && node.callee.type === "Identifier"
-            && node.callee.name === "BigInt"
-            && node.arguments.length === 1
-            && node.arguments[0].type === "Literal"
-            && typeof node.arguments[0].value === "number"
-            && Number.isInteger(node.arguments[0].value)
+            && callee?.type === "Identifier"
+            && nodeName(callee) === "BigInt"
+            && args.length === 1
+            && firstArg?.type === "Literal"
+            && typeof firstValue === "number"
+            && Number.isInteger(firstValue)
         ) {
-            return bigintLiteral(node.arguments[0].value);
+            return bigintLiteral(firstValue);
         }
         return node;
     });
 }
 
-function bigintExpression(value: Loose, next: Loose) {
+function bigintExpression(value: bigint, next: () => number): AstNode {
     const radixBits = 26n;
     const radix = 1n << radixBits;
-    const chunks: Loose[] = [];
+    const chunks: bigint[] = [];
     let work = value < 0n ? -value : value;
     if (work === 0n) chunks.push(0n);
     while (work > 0n) {
@@ -435,8 +587,7 @@ function bigintExpression(value: Loose, next: Loose) {
         work = work / radix;
     }
 
-    let expr;
-    expr = bigintLiteral(chunks[chunks.length - 1]);
+    let expr = bigintLiteral(chunks[chunks.length - 1]);
     for (let i = chunks.length - 2; i >= 0; i -= 1) {
         expr = binary("+", binary("<<", expr, bigintLiteral(radixBits)), bigintLiteral(chunks[i]));
     }
@@ -447,7 +598,7 @@ function bigintExpression(value: Loose, next: Loose) {
     return binary("^", binary("-", binary("+", binary("^", expr, bigintLiteral(xorKey)), bigintLiteral(addKey)), bigintLiteral(addKey)), bigintLiteral(xorKey));
 }
 
-function stringBlob(value: Loose, salt: Loose) {
+function stringBlob(value: string, salt: number): bigint {
     const base = 65537n;
     let pow = 1n;
     let out = 0n;
@@ -458,8 +609,8 @@ function stringBlob(value: Loose, salt: Loose) {
     return out;
 }
 
-function encodeUnsigned(value: Loose) {
-    const out: Loose[] = [];
+function encodeUnsigned(value: number): number[] {
+    const out: number[] = [];
     let current = value >>> 0;
     do {
         const part = current & 127;
@@ -469,11 +620,11 @@ function encodeUnsigned(value: Loose) {
     return out;
 }
 
-function encodeSigned(value: Loose) {
+function encodeSigned(value: number): number[] {
     return encodeUnsigned(value >= 0 ? value * 2 : (-value * 2) - 1);
 }
 
-function signedLengthFor(target: Loose, start: Loose, beforeOperand: Loose) {
+function signedLengthFor(target: number, start: number, beforeOperand: number): number {
     let len = 1;
     for (;;) {
         const next = encodeSigned(target - (start + beforeOperand + len)).length;
@@ -482,20 +633,20 @@ function signedLengthFor(target: Loose, start: Loose, beforeOperand: Loose) {
     }
 }
 
-function mix(current: Loose, encrypted: Loose, index: Loose) {
+function mix(current: number, encrypted: number, index: number): number {
     let mixed = (current ^ (encrypted + 2654435769 + ((current << 6) >>> 0) + (current >>> 2) + index)) >>> 0;
     mixed = Math.imul(mixed ^ (mixed >>> 16), 2246822507) >>> 0;
     return (mixed ^ (mixed >>> 13)) >>> 0;
 }
 
-function meshMix(current: Loose, value: Loose) {
+function meshMix(current: number, value: number): number {
     let h = (current ^ value) >>> 0;
     h = Math.imul(h ^ (h >>> 16), 2246822507) >>> 0;
     h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
     return (h ^ (h >>> 16)) >>> 0;
 }
 
-function meshValue(hash: Loose, value: Loose) {
+function meshValue(hash: number, value: unknown): number {
     if (typeof value === "number") return meshMix(hash, value >>> 0);
     if (Array.isArray(value)) {
         hash = meshMix(hash, value.length >>> 0);
@@ -507,7 +658,7 @@ function meshValue(hash: Loose, value: Loose) {
     return meshMix(hash, 3735928559);
 }
 
-function meshKey(mesh: Loose, base: Loose, tokenCount: Loose, seed: Loose, tag: Loose, ops: Loose) {
+function meshKey(mesh: MeshValue[], base: number, tokenCount: number, seed: number, tag: number, ops: number[]): number {
     let hash = 2166136261;
     hash = meshMix(hash, 1145713480);
     hash = meshMix(hash, 1296388936);
@@ -520,7 +671,7 @@ function meshKey(mesh: Loose, base: Loose, tokenCount: Loose, seed: Loose, tag: 
     return hash >>> 0;
 }
 
-function meshStream(key: Loose, index: Loose, base: Loose, salt: Loose) {
+function meshStream(key: number, index: number, base: number, salt: number): number {
     let hash = meshMix(key >>> 0, 1398035796);
     hash = meshMix(hash, salt >>> 0);
     hash = meshMix(hash, index >>> 0);
@@ -528,7 +679,7 @@ function meshStream(key: Loose, index: Loose, base: Loose, salt: Loose) {
     return hash % base;
 }
 
-function textDigest(value: Loose) {
+function textDigest(value: string): number {
     let hash = 2166136261;
     for (let i = 0; i < value.length; i += 1) {
         hash = meshMix(hash, value.charCodeAt(i));
@@ -536,7 +687,7 @@ function textDigest(value: Loose) {
     return hash >>> 0;
 }
 
-function normalizeRatio(value: Loose) {
+function normalizeRatio(value: unknown): number {
     const ratio = Number(value);
     if (!Number.isFinite(ratio)) return 1;
     if (ratio < 0) return 0;
@@ -544,20 +695,21 @@ function normalizeRatio(value: Loose) {
     return ratio;
 }
 
-function normalizeMaxFunctions(value: Loose) {
+function normalizeMaxFunctions(value: unknown): number {
     if (value === undefined || value === null) return Infinity;
     const max = Number(value);
     if (!Number.isFinite(max)) return Infinity;
     return Math.max(0, Math.floor(max));
 }
 
-function selectionScore(options: Loose, node: Loose, index: Loose) {
+function selectionScore(options: NumericVmResolvedOptions, node: AstNode, index: number): number {
     const name = functionName(node);
-    const bodySize = node && node.body && node.body.body ? node.body.body.length : 0;
-    return textDigest(String(options.seed) + ":" + index + ":" + name + ":" + bodySize) / 0x100000000;
+    const body = childNode(node, "body");
+    const bodySize = body ? bodyArray(body).length : 0;
+    return textDigest(`${options.seed}:${index}:${name}:${bodySize}`) / 0x100000000;
 }
 
-function constantDigest(constants: Loose) {
+function constantDigest(constants: ConstantEntry[]): number {
     let hash = textDigest("DJS-HMESH/constants/v1");
     for (let i = 0; i < constants.length; i += 1) {
         const constant = constants[i];
@@ -567,17 +719,17 @@ function constantDigest(constants: Loose) {
     return hash >>> 0;
 }
 
-function meshExpression(value: Loose): Loose {
+function meshExpression(value: MeshValue): AstNode {
     if (Array.isArray(value)) {
         return arrayExpression(value.map(meshExpression));
     }
     return literal(value >>> 0);
 }
 
-function encryptedStream(tokens: Loose, base: Loose, seed: Loose) {
+function encryptedStream(tokens: number[], base: number, seed: number): EncryptedStream {
     let state = seed >>> 0;
     let tag = seed >>> 0;
-    const encrypted: Loose[] = [];
+    const encrypted: number[] = [];
     for (let i = 0; i < tokens.length; i += 1) {
         const mul = 1 + ((state >>> 5) % (base - 1));
         const add = state % base;
@@ -589,29 +741,29 @@ function encryptedStream(tokens: Loose, base: Loose, seed: Loose) {
     return { encrypted: encrypted, tag: tag >>> 0 };
 }
 
-function packTokens(tokens: Loose, base: Loose) {
+function packTokens(tokens: number[], base: number): bigint {
     let out = 0n;
     let pow = 1n;
     const bigBase = BigInt(base);
-    tokens.forEach(function (token: Loose) {
+    tokens.forEach(function (token: number) {
         out += BigInt(token) * pow;
         pow *= bigBase;
     });
     return out;
 }
 
-function makeChaff(next: Loose, tokenCount: Loose, ratio: Loose) {
+function makeChaff(next: () => number, tokenCount: number, ratio: number): number[] {
     const length = Math.max(4, Math.min(32, Math.ceil(tokenCount * ratio / 16)));
-    const chaff: Loose[] = [];
+    const chaff: number[] = [];
     for (let i = 0; i < length; i += 1) {
         chaff.push(next() >>> 0);
     }
     return chaff;
 }
 
-function buildHashMeshRecord(record: Loose, encryptedTokens: Loose, opValues: Loose, constants: Loose, dialect: Loose, options: Loose) {
+function buildHashMeshRecord(record: ProgramRecord, encryptedTokens: number[], opValues: number[], constants: ConstantEntry[], dialect: Dialect, options: HashMeshOptions & { seed?: string }): void {
     const ratio = typeof options.chaffRatio === "number" ? options.chaffRatio : 0.55;
-    const buildSalt = hashSeed(String(options.seed || "toildefender-hmesh") + ":DJS-HMESH/build/v1");
+    const buildSalt = hashSeed(`${options.seed || "toildefender-hmesh"}:DJS-HMESH/build/v1`);
     const functionId = meshMix(buildSalt, dialect.seed);
     const chunkId = dialect.next() >>> 0;
     const constDigest = constantDigest(constants);
@@ -622,7 +774,7 @@ function buildHashMeshRecord(record: Loose, encryptedTokens: Loose, opValues: Lo
     if (options.deriveDialectFromMesh) flags |= 2;
     if (options.encodeChaff !== false) flags |= 4;
     const chaff = options.encodeChaff === false ? [] : makeChaff(dialect.next, record.tokenCount, ratio);
-    const mesh = [
+    const mesh: MeshValue[] = [
         buildSalt >>> 0,
         functionId >>> 0,
         chunkId >>> 0,
@@ -634,20 +786,20 @@ function buildHashMeshRecord(record: Loose, encryptedTokens: Loose, opValues: Lo
         chaff
     ];
     const key = meshKey(mesh, record.base, record.tokenCount, record.seed, record.tag, opValues);
-    const cipher = encryptedTokens.map(function (token: Loose, index: Loose) {
+    const cipher = encryptedTokens.map(function (token: number, index: number) {
         return (token + meshStream(key, index, record.base, streamSalt)) % record.base;
     });
     record.blob = packTokens(cipher, record.base);
     record.mesh = mesh;
 }
 
-function isSimplePattern(node: Loose) {
-    return node && node.type === "Identifier";
+function isSimplePattern(node: AstNode | null): boolean {
+    return node?.type === "Identifier";
 }
 
-function containsNestedFunction(node: Loose) {
+function containsNestedFunction(node: AstNode): boolean {
     let found = false;
-    traverser.traverseEx(node, [], function (this: { abort(): void }, child: Loose) {
+    traverser.traverseEx(node, [], function (this: { abort(): void }, child: AstNode) {
         if (child !== node && estest.isFunction(child)) {
             found = true;
             this.abort();
@@ -657,463 +809,522 @@ function containsNestedFunction(node: Loose) {
     return found;
 }
 
-function Compiler(this: Loose, fn: Loose, dialect: Loose, options: Loose) {
-    this.fn = fn;
-    this.dialect = dialect;
-    this.options = options || {};
-    this.instructions = [];
-    this.labelId = 0;
-    this.params = {};
-    this.functionScope = Object.create(null);
-    this.scopeStack = [];
-    this.localCount = 0;
-    this.constants = [];
-    this.constantKeys = {};
-    this.references = [];
-    this.referenceKeys = {};
-}
+class Compiler {
+    fn: AstNode;
+    dialect: Dialect;
+    options: NumericVmResolvedOptions;
+    instructions: Instruction[] = [];
+    labelId = 0;
+    params: Record<string, number> = {};
+    functionScope: ScopeMap = Object.create(null) as ScopeMap;
+    scopeStack: ScopeMap[] = [];
+    localCount = 0;
+    constants: ConstantEntry[] = [];
+    constantKeys: Record<string, number> = Object.create(null) as Record<string, number>;
+    references: string[] = [];
+    referenceKeys: Record<string, number> = Object.create(null) as Record<string, number>;
 
-Compiler.prototype.label = function () { return "L" + this.labelId++; };
-Compiler.prototype.mark = function (name: Loose) { this.instructions.push({ label: name }); };
-Compiler.prototype.emit = function (op: Loose) { this.instructions.push({ op: op, args: Array.prototype.slice.call(arguments, 1) }); };
-Compiler.prototype.pushScope = function () {
-    const scope = Object.create(null);
-    this.scopeStack.push(scope);
-    return scope;
-};
-Compiler.prototype.popScope = function () {
-    this.scopeStack.pop();
-};
-Compiler.prototype.currentScope = function () {
-    if (this.scopeStack.length === 0) return this.pushScope();
-    return this.scopeStack[this.scopeStack.length - 1];
-};
-Compiler.prototype.declareLocal = function (name: Loose, functionScoped: Loose) {
-    const scope = functionScoped ? this.functionScope : this.currentScope();
-    if (!Object.prototype.hasOwnProperty.call(scope, name)) scope[name] = this.localCount++;
-    return scope[name];
-};
-Compiler.prototype.resolveLocal = function (name: Loose) {
-    for (let i = this.scopeStack.length - 1; i >= 0; i -= 1) {
-        const scope = this.scopeStack[i];
-        if (Object.prototype.hasOwnProperty.call(scope, name)) return scope[name];
+    constructor(fn: AstNode, dialect: Dialect, options: NumericVmResolvedOptions) {
+        this.fn = fn;
+        this.dialect = dialect;
+        this.options = options;
     }
-    if (Object.prototype.hasOwnProperty.call(this.functionScope, name)) return this.functionScope[name];
-    return null;
-};
-Compiler.prototype.addConstant = function (kind: Loose, value: Loose) {
-    const key = kind + ":" + String(value);
-    if (Object.prototype.hasOwnProperty.call(this.constantKeys, key)) return this.constantKeys[key];
-    const index = this.constants.length;
-    this.constantKeys[key] = index;
-    this.constants.push({ kind: kind, value: value });
-    return index;
-};
-Compiler.prototype.addReference = function (value: Loose) {
-    const key = String(value);
-    if (Object.prototype.hasOwnProperty.call(this.referenceKeys, key)) return this.referenceKeys[key];
-    const index = this.references.length;
-    this.referenceKeys[key] = index;
-    this.references.push(key);
-    return index;
-};
-Compiler.prototype.validateBindings = function () {
-    const self = this;
-    this.fn.params.forEach(function (param: Loose, index: Loose) {
-        if (!isSimplePattern(param)) throw new Error("unsupported parameter pattern");
-        self.params[param.name] = index;
-    });
-    traverser.traverseEx(this.fn.body, [], function (this: { abort(): void }, node: Loose) {
-        if (node !== self.fn.body && estest.isFunction(node)) {
-            this.abort();
-            return node;
+
+    label(): string { return `L${this.labelId++}`; }
+    mark(name: string): void { this.instructions.push({ label: name, args: [] }); }
+    emit(op: OpName, ...args: Array<number | string>): void { this.instructions.push({ op: op, args: args }); }
+
+    pushScope(): ScopeMap {
+        const scope = Object.create(null) as ScopeMap;
+        this.scopeStack.push(scope);
+        return scope;
+    }
+
+    popScope(): void {
+        this.scopeStack.pop();
+    }
+
+    currentScope(): ScopeMap {
+        if (this.scopeStack.length === 0) return this.pushScope();
+        return this.scopeStack[this.scopeStack.length - 1];
+    }
+
+    declareLocal(name: string, functionScoped: boolean): number {
+        const scope = functionScoped ? this.functionScope : this.currentScope();
+        if (!Object.prototype.hasOwnProperty.call(scope, name)) scope[name] = this.localCount++;
+        return scope[name];
+    }
+
+    resolveLocal(name: string): number | null {
+        for (let i = this.scopeStack.length - 1; i >= 0; i -= 1) {
+            const scope = this.scopeStack[i];
+            if (Object.prototype.hasOwnProperty.call(scope, name)) return scope[name];
         }
-        if (node.type === "VariableDeclarator") {
-            if (!isSimplePattern(node.id)) throw new Error("unsupported declaration pattern");
-        }
-        return node;
-    });
-};
-Compiler.prototype.compile = function () {
-    if (!this.fn.body || this.fn.body.type !== "BlockStatement") throw new Error("unsupported function body");
-    if (containsNestedFunction(this.fn.body)) throw new Error("nested functions are not virtualized");
-    this.validateBindings();
-    this.pushScope();
-    this.compileBlock(this.fn.body, false);
-    this.popScope();
-    this.emit("PUSH_UNDEFINED");
-    this.emit("RETURN");
-    return this.finish();
-};
-Compiler.prototype.compileBlock = function (block: Loose, createScope: Loose) {
-    const self = this;
-    if (createScope !== false) this.pushScope();
-    block.body.forEach(function (stmt: Loose) { self.compileStatement(stmt); });
-    if (createScope !== false) this.popScope();
-};
-Compiler.prototype.compileStatement = function (stmt: Loose) {
-    switch (stmt.type) {
-        case "BlockStatement": this.compileBlock(stmt, true); return;
-        case "VariableDeclaration":
-            for (let i = 0; i < stmt.declarations.length; i += 1) {
-                const decl = stmt.declarations[i];
-                const slot = this.declareLocal(decl.id.name, stmt.kind === "var");
-                if (decl.init) this.compileExpression(decl.init); else this.emit("PUSH_UNDEFINED");
-                this.emit("STORE_LOCAL", slot);
+        if (Object.prototype.hasOwnProperty.call(this.functionScope, name)) return this.functionScope[name];
+        return null;
+    }
+
+    addConstant(kind: string, value: unknown): number {
+        const key = kind + ":" + String(value);
+        if (Object.prototype.hasOwnProperty.call(this.constantKeys, key)) return this.constantKeys[key];
+        const index = this.constants.length;
+        this.constantKeys[key] = index;
+        this.constants.push({ kind: kind, value: value });
+        return index;
+    }
+
+    addReference(value: unknown): number {
+        const key = String(value);
+        if (Object.prototype.hasOwnProperty.call(this.referenceKeys, key)) return this.referenceKeys[key];
+        const index = this.references.length;
+        this.referenceKeys[key] = index;
+        this.references.push(key);
+        return index;
+    }
+
+    validateBindings(): void {
+        nodeParams(this.fn).forEach((param: AstNode, index: number) => {
+            if (!isSimplePattern(param)) throw new Error("unsupported parameter pattern");
+            this.params[nodeName(param) || ""] = index;
+        });
+        const body = requiredChild(this.fn, "body");
+        traverser.traverseEx(body, [], function (this: { abort(): void }, node: AstNode) {
+            if (node !== body && estest.isFunction(node)) {
+                this.abort();
+                return node;
             }
-            return;
-        case "ExpressionStatement": this.compileExpression(stmt.expression); this.emit("POP"); return;
-        case "ReturnStatement":
-            if (stmt.argument) this.compileExpression(stmt.argument); else this.emit("PUSH_UNDEFINED");
-            this.emit("RETURN");
-            return;
-        case "IfStatement": {
-            const elseLabel = this.label();
-            const endLabel = this.label();
-            this.compileExpression(stmt.test);
-            this.emit("JMP_FALSE", elseLabel);
-            this.compileStatement(stmt.consequent);
-            this.emit("JMP", endLabel);
-            this.mark(elseLabel);
-            if (stmt.alternate) this.compileStatement(stmt.alternate);
-            this.mark(endLabel);
+            if (node.type === "VariableDeclarator" && !isSimplePattern(childNode(node, "id"))) {
+                throw new Error("unsupported declaration pattern");
+            }
+            return node;
+        });
+    }
+
+    compile(): ProgramRecord {
+        const body = requiredChild(this.fn, "body");
+        if (body.type !== "BlockStatement") throw new Error("unsupported function body");
+        if (containsNestedFunction(body)) throw new Error("nested functions are not virtualized");
+        this.validateBindings();
+        this.pushScope();
+        this.compileBlock(body, false);
+        this.popScope();
+        this.emit("PUSH_UNDEFINED");
+        this.emit("RETURN");
+        return this.finish();
+    }
+
+    compileBlock(block: AstNode, createScope: boolean): void {
+        if (createScope) this.pushScope();
+        bodyArray(block).forEach((stmt: AstNode) => { this.compileStatement(stmt); });
+        if (createScope) this.popScope();
+    }
+
+    compileStatement(stmt: AstNode): void {
+        switch (stmt.type) {
+            case "BlockStatement": this.compileBlock(stmt, true); return;
+            case "VariableDeclaration":
+                for (let i = 0; i < nodeDeclarations(stmt).length; i += 1) {
+                    const decl = nodeDeclarations(stmt)[i];
+                    const id = requiredChild(decl, "id");
+                    const slot = this.declareLocal(nodeName(id) || "", nodeKind(stmt) === "var");
+                    const init = childNode(decl, "init");
+                    if (init) this.compileExpression(init); else this.emit("PUSH_UNDEFINED");
+                    this.emit("STORE_LOCAL", slot);
+                }
+                return;
+            case "ExpressionStatement": this.compileExpression(requiredChild(stmt, "expression")); this.emit("POP"); return;
+            case "ReturnStatement": {
+                const argument = childNode(stmt, "argument");
+                if (argument) this.compileExpression(argument); else this.emit("PUSH_UNDEFINED");
+                this.emit("RETURN");
+                return;
+            }
+            case "IfStatement": {
+                const elseLabel = this.label();
+                const endLabel = this.label();
+                this.compileExpression(requiredChild(stmt, "test"));
+                this.emit("JMP_FALSE", elseLabel);
+                this.compileStatement(requiredChild(stmt, "consequent"));
+                this.emit("JMP", endLabel);
+                this.mark(elseLabel);
+                const alternate = childNode(stmt, "alternate");
+                if (alternate) this.compileStatement(alternate);
+                this.mark(endLabel);
+                return;
+            }
+            case "WhileStatement": {
+                const start = this.label();
+                const end = this.label();
+                this.mark(start);
+                this.compileExpression(requiredChild(stmt, "test"));
+                this.emit("JMP_FALSE", end);
+                this.compileStatement(requiredChild(stmt, "body"));
+                this.emit("JMP", start);
+                this.mark(end);
+                return;
+            }
+            case "EmptyStatement": return;
+            default: throw new Error("unsupported statement " + stmt.type);
+        }
+    }
+
+    compileExpression(expr: AstNode): void {
+        switch (expr.type) {
+            case "Literal": this.compileLiteral(expr); return;
+            case "Identifier": this.compileIdentifier(nodeName(expr) || ""); return;
+            case "ThisExpression": this.emit("PUSH_THIS"); return;
+            case "ArrayExpression": this.compileArray(expr); return;
+            case "ObjectExpression": this.compileObject(expr); return;
+            case "UnaryExpression": this.compileUnary(expr); return;
+            case "BinaryExpression": this.compileBinary(expr); return;
+            case "LogicalExpression": this.compileLogical(expr); return;
+            case "AssignmentExpression": this.compileAssignment(expr); return;
+            case "MemberExpression": this.compileMember(expr); return;
+            case "CallExpression": this.compileCall(expr); return;
+            case "ConditionalExpression": this.compileConditional(expr); return;
+            case "SequenceExpression":
+                for (let i = 0; i < nodeExpressions(expr).length; i += 1) {
+                    this.compileExpression(nodeExpressions(expr)[i]);
+                    if (i + 1 < nodeExpressions(expr).length) this.emit("POP");
+                }
+                return;
+            default: throw new Error("unsupported expression " + expr.type);
+        }
+    }
+
+    compileLiteral(expr: AstNode): void {
+        const value = nodeValue(expr);
+        if (nodeFields(expr).regex) throw new Error("regex literals are unsupported");
+        if (value === null) this.emit("PUSH_NULL");
+        else if (value === true) this.emit("PUSH_TRUE");
+        else if (value === false) this.emit("PUSH_FALSE");
+        else if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < SMALL_LIMIT) this.emit("PUSH_SMALL", value);
+        else this.emit("PUSH_CONST", this.addConstant(typeof value, value));
+    }
+
+    compileIdentifier(name: string): void {
+        if (name === "undefined") this.emit("PUSH_UNDEFINED");
+        else if (name === "arguments") this.emit("PUSH_ARGUMENTS");
+        else {
+            const slot = this.resolveLocal(name);
+            if (slot !== null) this.emit("LOAD_LOCAL", slot);
+            else if (Object.prototype.hasOwnProperty.call(this.params, name)) this.emit("LOAD_ARG", this.params[name]);
+            else this.emit("PUSH_CONST", this.addConstant("reference", name));
+        }
+    }
+
+    compileArray(expr: AstNode): void {
+        const elements = nodeElements(expr);
+        for (let i = 0; i < elements.length; i += 1) {
+            const element = elements[i];
+            if (element === null) this.emit("PUSH_UNDEFINED");
+            else this.compileExpression(element);
+        }
+        this.emit("MAKE_ARRAY", elements.length);
+    }
+
+    compileObject(expr: AstNode): void {
+        const properties = nodeProperties(expr);
+        for (let i = 0; i < properties.length; i += 1) {
+            const prop = properties[i];
+            const kind = nodeKind(prop);
+            if (kind && kind !== "init") throw new Error("unsupported object property kind");
+            if (prop.type === "SpreadElement") throw new Error("unsupported object spread");
+            const keyNode = requiredChild(prop, "key");
+            const key = nodeFlag(prop, "computed") ? null : nodeName(keyNode) || nodeValue(keyNode);
+            if (key === null) this.compileExpression(keyNode); else this.emit("PUSH_CONST", this.addConstant("string", String(key)));
+            this.compileExpression(requiredChild(prop, "value"));
+        }
+        this.emit("MAKE_OBJECT", properties.length);
+    }
+
+    compileUnary(expr: AstNode): void {
+        const operator = nodeOperator(expr);
+        if (operator === "void") {
+            this.compileExpression(requiredChild(expr, "argument"));
+            this.emit("POP");
+            this.emit("PUSH_UNDEFINED");
             return;
         }
-        case "WhileStatement": {
-            const start = this.label();
-            const end = this.label();
-            this.mark(start);
-            this.compileExpression(stmt.test);
-            this.emit("JMP_FALSE", end);
-            this.compileStatement(stmt.body);
-            this.emit("JMP", start);
+        this.compileExpression(requiredChild(expr, "argument"));
+        if (operator === "-") this.emit("NEG");
+        else if (operator === "!") this.emit("NOT");
+        else if (operator === "~") this.emit("BIT_NOT");
+        else if (operator === "typeof") this.emit("TYPEOF");
+        else if (operator === "+") this.emit("TO_NUMBER");
+        else throw new Error("unsupported unary operator " + String(operator));
+    }
+
+    compileBinary(expr: AstNode): void {
+        this.compileExpression(requiredChild(expr, "left"));
+        this.compileExpression(requiredChild(expr, "right"));
+        const map: Record<string, OpName> = { "+": "ADD", "-": "SUB", "*": "MUL", "/": "DIV", "%": "MOD", "**": "POW", "==": "EQ", "!=": "NEQ", "===": "STRICT_EQ", "!==": "STRICT_NEQ", "<": "LT", "<=": "LTE", ">": "GT", ">=": "GTE" };
+        const operator = nodeOperator(expr) || "";
+        if (!map[operator]) throw new Error("unsupported binary operator " + operator);
+        this.emit(map[operator]);
+    }
+
+    compileLogical(expr: AstNode): void {
+        const end = this.label();
+        const operator = nodeOperator(expr);
+        if (operator === "??") {
+            const right = this.label();
+            this.compileExpression(requiredChild(expr, "left"));
+            this.emit("DUP");
+            this.emit("JMP_NULLISH", right);
+            this.emit("JMP", end);
+            this.mark(right);
+            this.emit("POP");
+            this.compileExpression(requiredChild(expr, "right"));
             this.mark(end);
             return;
         }
-        case "EmptyStatement": return;
-        default: throw new Error("unsupported statement " + stmt.type);
-    }
-};
-Compiler.prototype.compileExpression = function (expr: Loose) {
-    switch (expr.type) {
-        case "Literal": this.compileLiteral(expr); return;
-        case "Identifier": this.compileIdentifier(expr.name); return;
-        case "ThisExpression": this.emit("PUSH_THIS"); return;
-        case "ArrayExpression": this.compileArray(expr); return;
-        case "ObjectExpression": this.compileObject(expr); return;
-        case "UnaryExpression": this.compileUnary(expr); return;
-        case "BinaryExpression": this.compileBinary(expr); return;
-        case "LogicalExpression": this.compileLogical(expr); return;
-        case "AssignmentExpression": this.compileAssignment(expr); return;
-        case "MemberExpression": this.compileMember(expr); return;
-        case "CallExpression": this.compileCall(expr); return;
-        case "ConditionalExpression": this.compileConditional(expr); return;
-        case "SequenceExpression":
-            for (let i = 0; i < expr.expressions.length; i += 1) {
-                this.compileExpression(expr.expressions[i]);
-                if (i + 1 < expr.expressions.length) this.emit("POP");
-            }
-            return;
-        default: throw new Error("unsupported expression " + expr.type);
-    }
-};
-Compiler.prototype.compileLiteral = function (expr: Loose) {
-    if (expr.regex) throw new Error("regex literals are unsupported");
-    if (expr.value === null) this.emit("PUSH_NULL");
-    else if (expr.value === true) this.emit("PUSH_TRUE");
-    else if (expr.value === false) this.emit("PUSH_FALSE");
-    else if (typeof expr.value === "number" && Number.isInteger(expr.value) && expr.value >= 0 && expr.value < SMALL_LIMIT) this.emit("PUSH_SMALL", expr.value);
-    else this.emit("PUSH_CONST", this.addConstant(typeof expr.value, expr.value));
-};
-Compiler.prototype.compileIdentifier = function (name: Loose) {
-    if (name === "undefined") this.emit("PUSH_UNDEFINED");
-    else if (name === "arguments") this.emit("PUSH_ARGUMENTS");
-    else {
-        const slot = this.resolveLocal(name);
-        if (slot !== null) this.emit("LOAD_LOCAL", slot);
-        else if (Object.prototype.hasOwnProperty.call(this.params, name)) this.emit("LOAD_ARG", this.params[name]);
-        else this.emit("PUSH_CONST", this.addConstant("reference", name));
-    }
-};
-Compiler.prototype.compileArray = function (expr: Loose) {
-    for (let i = 0; i < expr.elements.length; i += 1) {
-        if (expr.elements[i] === null) this.emit("PUSH_UNDEFINED");
-        else this.compileExpression(expr.elements[i]);
-    }
-    this.emit("MAKE_ARRAY", expr.elements.length);
-};
-Compiler.prototype.compileObject = function (expr: Loose) {
-    for (let i = 0; i < expr.properties.length; i += 1) {
-        const prop = expr.properties[i];
-        if (prop.kind && prop.kind !== "init") throw new Error("unsupported object property kind");
-        if (prop.type === "SpreadElement") throw new Error("unsupported object spread");
-        const key = prop.computed ? null : prop.key.name || prop.key.value;
-        if (key === null) this.compileExpression(prop.key); else this.emit("PUSH_CONST", this.addConstant("string", String(key)));
-        this.compileExpression(prop.value);
-    }
-    this.emit("MAKE_OBJECT", expr.properties.length);
-};
-Compiler.prototype.compileUnary = function (expr: Loose) {
-    if (expr.operator === "void") {
-        this.compileExpression(expr.argument);
-        this.emit("POP");
-        this.emit("PUSH_UNDEFINED");
-        return;
-    }
-    this.compileExpression(expr.argument);
-    if (expr.operator === "-") this.emit("NEG");
-    else if (expr.operator === "!") this.emit("NOT");
-    else if (expr.operator === "~") this.emit("BIT_NOT");
-    else if (expr.operator === "typeof") this.emit("TYPEOF");
-    else if (expr.operator === "+") this.emit("TO_NUMBER");
-    else throw new Error("unsupported unary operator " + expr.operator);
-};
-Compiler.prototype.compileBinary = function (expr: Loose) {
-    this.compileExpression(expr.left);
-    this.compileExpression(expr.right);
-    const map: Record<string, string> = { "+": "ADD", "-": "SUB", "*": "MUL", "/": "DIV", "%": "MOD", "**": "POW", "==": "EQ", "!=": "NEQ", "===": "STRICT_EQ", "!==": "STRICT_NEQ", "<": "LT", "<=": "LTE", ">": "GT", ">=": "GTE" };
-    if (!map[expr.operator]) throw new Error("unsupported binary operator " + expr.operator);
-    this.emit(map[expr.operator]);
-};
-Compiler.prototype.compileLogical = function (expr: Loose) {
-    const end = this.label();
-    if (expr.operator === "??") {
-        const right = this.label();
-        this.compileExpression(expr.left);
+        if (operator !== "&&" && operator !== "||") throw new Error("unsupported logical operator " + String(operator));
+        this.compileExpression(requiredChild(expr, "left"));
         this.emit("DUP");
-        this.emit("JMP_NULLISH", right);
-        this.emit("JMP", end);
-        this.mark(right);
+        this.emit(operator === "&&" ? "JMP_FALSE" : "JMP_TRUE", end);
         this.emit("POP");
-        this.compileExpression(expr.right);
+        this.compileExpression(requiredChild(expr, "right"));
         this.mark(end);
-        return;
     }
-    if (expr.operator !== "&&" && expr.operator !== "||") throw new Error("unsupported logical operator " + expr.operator);
-    this.compileExpression(expr.left);
-    this.emit("DUP");
-    this.emit(expr.operator === "&&" ? "JMP_FALSE" : "JMP_TRUE", end);
-    this.emit("POP");
-    this.compileExpression(expr.right);
-    this.mark(end);
-};
-Compiler.prototype.compileAssignment = function (expr: Loose) {
-    if (expr.left.type === "Identifier") {
-        const slot = this.resolveLocal(expr.left.name);
-        if (slot === null) throw new Error("unsupported assignment target " + expr.left.name);
-        if (expr.operator === "=") this.compileExpression(expr.right);
-        else {
-            const map: Record<string, string> = { "+=": "ADD", "-=": "SUB", "*=": "MUL", "/=": "DIV", "%=": "MOD" };
-            if (!map[expr.operator]) throw new Error("unsupported assignment operator " + expr.operator);
-            this.compileIdentifier(expr.left.name);
-            this.compileExpression(expr.right);
-            this.emit(map[expr.operator]);
+
+    compileAssignment(expr: AstNode): void {
+        const left = requiredChild(expr, "left");
+        const operator = nodeOperator(expr);
+        if (left.type === "Identifier") {
+            const name = nodeName(left) || "";
+            const slot = this.resolveLocal(name);
+            if (slot === null) throw new Error("unsupported assignment target " + name);
+            if (operator === "=") this.compileExpression(requiredChild(expr, "right"));
+            else {
+                const map: Record<string, OpName> = { "+=": "ADD", "-=": "SUB", "*=": "MUL", "/=": "DIV", "%=": "MOD" };
+                if (!operator || !map[operator]) throw new Error("unsupported assignment operator " + String(operator));
+                this.compileIdentifier(name);
+                this.compileExpression(requiredChild(expr, "right"));
+                this.emit(map[operator]);
+            }
+            this.emit("DUP");
+            this.emit("STORE_LOCAL", slot);
+            return;
         }
-        this.emit("DUP");
-        this.emit("STORE_LOCAL", slot);
-        return;
-    }
-    if (expr.left.type === "MemberExpression" && expr.operator === "=") {
-        this.compileExpression(expr.left.object);
-        this.compilePropertyKey(expr.left);
-        this.compileExpression(expr.right);
-        this.emit("SET_PROP");
-        return;
-    }
-    throw new Error("unsupported assignment expression");
-};
-Compiler.prototype.compilePropertyKey = function (expr: Loose) {
-    if (expr.computed) this.compileExpression(expr.property);
-    else this.emit("PUSH_CONST", this.addConstant("string", expr.property.name));
-};
-Compiler.prototype.compileMember = function (expr: Loose) {
-    this.compileExpression(expr.object);
-    this.compilePropertyKey(expr);
-    this.emit("GET_PROP");
-};
-Compiler.prototype.compileCall = function (expr: Loose) {
-    if (expr.callee.type === "MemberExpression") {
-        this.compileExpression(expr.callee.object);
-        this.compilePropertyKey(expr.callee);
-        for (let i = 0; i < expr.arguments.length; i += 1) this.compileExpression(expr.arguments[i]);
-        this.emit("CALL_METHOD", expr.arguments.length);
-        return;
-    }
-    this.compileExpression(expr.callee);
-    for (let j = 0; j < expr.arguments.length; j += 1) this.compileExpression(expr.arguments[j]);
-    this.emit("CALL_EXT", 0, expr.arguments.length);
-};
-Compiler.prototype.compileConditional = function (expr: Loose) {
-    const alternate = this.label();
-    const end = this.label();
-    this.compileExpression(expr.test);
-    this.emit("JMP_FALSE", alternate);
-    this.compileExpression(expr.consequent);
-    this.emit("JMP", end);
-    this.mark(alternate);
-    this.compileExpression(expr.alternate);
-    this.mark(end);
-};
-Compiler.prototype.instructionSize = function (instr: Loose, positions: Loose) {
-    if (instr.label) return 0;
-    const start = positions.get(instr) || 0;
-    let size = 1;
-    for (let i = 0; i < instr.args.length; i += 1) {
-        const arg = instr.args[i];
-        if (typeof arg === "string") size += signedLengthFor(positions.get(arg) || 0, start, size);
-        else size += encodeUnsigned(arg).length;
-    }
-    return size;
-};
-Compiler.prototype.isInstruction = function (instr: Loose, op: Loose) {
-    return instr && !instr.label && instr.op === op;
-};
-Compiler.prototype.fuseSuperinstructions = function () {
-    const out: Loose[] = [];
-    for (let i = 0; i < this.instructions.length; i += 1) {
-        const one = this.instructions[i];
-        const two = this.instructions[i + 1];
-        const three = this.instructions[i + 2];
-        if (this.isInstruction(one, "PUSH_CONST") && this.isInstruction(two, "GET_PROP")) {
-            out.push({ op: "GET_CONST_PROP", args: [one.args[0]] });
-            i += 1;
-            continue;
+        if (left.type === "MemberExpression" && operator === "=") {
+            this.compileExpression(requiredChild(left, "object"));
+            this.compilePropertyKey(left);
+            this.compileExpression(requiredChild(expr, "right"));
+            this.emit("SET_PROP");
+            return;
         }
-        if (this.isInstruction(one, "DUP") && this.isInstruction(two, "STORE_LOCAL") && this.isInstruction(three, "POP")) {
-            out.push({ op: "STORE_LOCAL_POP", args: [two.args[0]] });
-            i += 2;
-            continue;
-        }
-        out.push(one);
+        throw new Error("unsupported assignment expression");
     }
-    this.instructions = out;
-};
-Compiler.prototype.assemble = function () {
-    const positions = new Map();
-    let stable = false;
-    while (!stable) {
-        stable = true;
-        let cursor = 0;
+
+    compilePropertyKey(expr: AstNode): void {
+        if (nodeFlag(expr, "computed")) this.compileExpression(requiredChild(expr, "property"));
+        else this.emit("PUSH_CONST", this.addConstant("string", nodeName(requiredChild(expr, "property")) || ""));
+    }
+
+    compileMember(expr: AstNode): void {
+        this.compileExpression(requiredChild(expr, "object"));
+        this.compilePropertyKey(expr);
+        this.emit("GET_PROP");
+    }
+
+    compileCall(expr: AstNode): void {
+        const callee = requiredChild(expr, "callee");
+        const args = nodeArguments(expr);
+        if (callee.type === "MemberExpression") {
+            this.compileExpression(requiredChild(callee, "object"));
+            this.compilePropertyKey(callee);
+            for (let i = 0; i < args.length; i += 1) this.compileExpression(args[i]);
+            this.emit("CALL_METHOD", args.length);
+            return;
+        }
+        this.compileExpression(callee);
+        for (let j = 0; j < args.length; j += 1) this.compileExpression(args[j]);
+        this.emit("CALL_EXT", 0, args.length);
+    }
+
+    compileConditional(expr: AstNode): void {
+        const alternate = this.label();
+        const end = this.label();
+        this.compileExpression(requiredChild(expr, "test"));
+        this.emit("JMP_FALSE", alternate);
+        this.compileExpression(requiredChild(expr, "consequent"));
+        this.emit("JMP", end);
+        this.mark(alternate);
+        this.compileExpression(requiredChild(expr, "alternate"));
+        this.mark(end);
+    }
+
+    instructionSize(instr: Instruction, positions: Map<Instruction | string, number>): number {
+        if (instr.label) return 0;
+        const start = positions.get(instr) || 0;
+        let size = 1;
+        for (let i = 0; i < instr.args.length; i += 1) {
+            const arg = instr.args[i];
+            if (typeof arg === "string") size += signedLengthFor(positions.get(arg) || 0, start, size);
+            else size += encodeUnsigned(arg).length;
+        }
+        return size;
+    }
+
+    isInstruction(instr: Instruction | undefined, op: OpName): instr is Instruction & { op: OpName } {
+        return Boolean(instr && !instr.label && instr.op === op);
+    }
+
+    fuseSuperinstructions(): void {
+        const out: Instruction[] = [];
         for (let i = 0; i < this.instructions.length; i += 1) {
-            const instr = this.instructions[i];
-            if (instr.label) {
-                if (positions.get(instr.label) !== cursor) stable = false;
-                positions.set(instr.label, cursor);
-            } else {
-                positions.set(instr, cursor);
-                cursor += this.instructionSize(instr, positions);
+            const one = this.instructions[i];
+            const two = this.instructions[i + 1];
+            const three = this.instructions[i + 2];
+            if (this.isInstruction(one, "PUSH_CONST") && this.isInstruction(two, "GET_PROP")) {
+                out.push({ op: "GET_CONST_PROP", args: [ one.args[0] ] });
+                i += 1;
+                continue;
+            }
+            if (this.isInstruction(one, "DUP") && this.isInstruction(two, "STORE_LOCAL") && this.isInstruction(three, "POP")) {
+                out.push({ op: "STORE_LOCAL_POP", args: [ two.args[0] ] });
+                i += 2;
+                continue;
+            }
+            out.push(one);
+        }
+        this.instructions = out;
+    }
+
+    assemble(): number[] {
+        const positions = new Map<Instruction | string, number>();
+        let stable = false;
+        while (!stable) {
+            stable = true;
+            let cursor = 0;
+            for (let i = 0; i < this.instructions.length; i += 1) {
+                const instr = this.instructions[i];
+                if (instr.label) {
+                    if (positions.get(instr.label) !== cursor) stable = false;
+                    positions.set(instr.label, cursor);
+                } else {
+                    positions.set(instr, cursor);
+                    cursor += this.instructionSize(instr, positions);
+                }
             }
         }
-    }
-    const tokens: Loose[] = [];
-    for (let j = 0; j < this.instructions.length; j += 1) {
-        const op = this.instructions[j];
-        if (op.label) continue;
-        const start = tokens.length;
-        tokens.push(this.dialect.opcodes[op.op]);
-        for (let k = 0; k < op.args.length; k += 1) {
-            const arg = op.args[k];
-            if (typeof arg === "string") {
-                const before = tokens.length - start;
-                const len = signedLengthFor(positions.get(arg), start, before);
-                const rel = positions.get(arg) - (start + before + len);
-                encodeSigned(rel).forEach(function (value: Loose) { tokens.push(value); });
-            } else {
-                encodeUnsigned(arg).forEach(function (value: Loose) { tokens.push(value); });
+        const tokens: number[] = [];
+        for (let j = 0; j < this.instructions.length; j += 1) {
+            const op = this.instructions[j];
+            if (op.label) continue;
+            assert.ok(op.op);
+            const start = tokens.length;
+            tokens.push(this.dialect.opcodes[op.op]);
+            for (let k = 0; k < op.args.length; k += 1) {
+                const arg = op.args[k];
+                if (typeof arg === "string") {
+                    const before = tokens.length - start;
+                    const target = positions.get(arg) || 0;
+                    const len = signedLengthFor(target, start, before);
+                    const rel = target - (start + before + len);
+                    encodeSigned(rel).forEach(function (value: number) { tokens.push(value); });
+                } else {
+                    encodeUnsigned(arg).forEach(function (value: number) { tokens.push(value); });
+                }
             }
         }
+        return tokens;
     }
-    return tokens;
-};
-Compiler.prototype.constantExpression = function (constant: Loose) {
-    const next = this.dialect.next;
-    if (constant.kind === "number") {
-        if (Number.isNaN(constant.value)) return binary("/", literal(0), literal(0));
-        if (constant.value === Infinity) return binary("/", literal(1), literal(0));
-        if (constant.value === -Infinity) return { type: "UnaryExpression", operator: "-", prefix: true, argument: binary("/", literal(1), literal(0)) };
-        return literal(constant.value);
+
+    constantExpression(constant: ConstantEntry): AstNode {
+        const next = this.dialect.next;
+        if (constant.kind === "number") {
+            const value = Number(constant.value);
+            if (Number.isNaN(value)) return binary("/", literal(0), literal(0));
+            if (value === Infinity) return binary("/", literal(1), literal(0));
+            if (value === -Infinity) return { type: "UnaryExpression", operator: "-", prefix: true, argument: binary("/", literal(1), literal(0)) };
+            return literal(value);
+        }
+        if (constant.kind === "string" || constant.kind === "reference") {
+            const value = String(constant.value);
+            const salt = (next() & 65535) || 1;
+            const decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(value, salt), next), literal(value.length), literal(salt) ]);
+            if (constant.kind === "reference") {
+                return {
+                    type: "ConditionalExpression",
+                    test: binary("===", unary("typeof", identifier(value)), literal("undefined")),
+                    consequent: member(identifier("globalThis"), decoded),
+                    alternate: identifier(value)
+                };
+            }
+            return decoded;
+        }
+        if (constant.kind === "boolean") return literal(Boolean(constant.value));
+        if (constant.kind === "undefined") return { type: "UnaryExpression", operator: "void", prefix: true, argument: literal(0) };
+        throw new Error("unsupported constant " + constant.kind);
     }
-    if (constant.kind === "string" || constant.kind === "reference") {
-        const value = String(constant.value);
+
+    referenceExpression(value: unknown): AstNode {
+        const next = this.dialect.next;
+        const name = String(value);
         const salt = (next() & 65535) || 1;
-        const decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(value, salt), next), literal(value.length), literal(salt) ]);
-        if (constant.kind === "reference") {
-            return {
-                type: "ConditionalExpression",
-                test: binary("===", unary("typeof", identifier(value)), literal("undefined")),
-                consequent: member(identifier("globalThis"), decoded),
-                alternate: identifier(value)
-            };
-        }
-        return decoded;
+        const decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
+        return {
+            type: "ConditionalExpression",
+            test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
+            consequent: member(identifier("globalThis"), decoded),
+            alternate: identifier(name)
+        };
     }
-    if (constant.kind === "boolean") return literal(!!constant.value);
-    if (constant.kind === "undefined") return { type: "UnaryExpression", operator: "void", prefix: true, argument: literal(0) };
-    throw new Error("unsupported constant " + constant.kind);
-};
-Compiler.prototype.referenceExpression = function (value: Loose) {
-    const next = this.dialect.next;
-    const name = String(value);
-    const salt = (next() & 65535) || 1;
-    const decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
-    return {
-        type: "ConditionalExpression",
-        test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
-        consequent: member(identifier("globalThis"), decoded),
-        alternate: identifier(name)
-    };
-};
-Compiler.prototype.constantCellExpression = function (constant: Loose) {
-    if (constant.kind === "reference") {
+
+    constantCellExpression(constant: ConstantEntry): AstNode {
+        if (constant.kind === "reference") {
+            return arrayExpression([
+                literal(3),
+                literal(this.addReference(constant.value))
+            ]);
+        }
+        if (constant.kind !== "string" && constant.kind !== "reference") {
+            return this.constantExpression(constant);
+        }
+        const lazy = functionExpression([ returnStatement(this.constantExpression(constant)) ]);
+        setNodeField(lazy, "toildefender$numericVmInternal", true);
         return arrayExpression([
-            literal(3),
-            literal(this.addReference(constant.value))
+            literal(constant.kind === "reference" ? 2 : 0),
+            lazy
         ]);
     }
-    if (constant.kind !== "string" && constant.kind !== "reference") {
-        return this.constantExpression(constant);
-    }
-    return arrayExpression([
-        literal(constant.kind === "reference" ? 2 : 0),
-        Object.assign(functionExpression([ returnStatement(this.constantExpression(constant)) ]), {
-            toildefender$numericVmInternal: true
-        })
-    ]);
-};
-Compiler.prototype.finish = function () {
-    this.fuseSuperinstructions();
-    const tokens = this.assemble();
-    const encrypted = encryptedStream(tokens, this.dialect.base, this.dialect.seed);
-    const opValues = OP_NAMES.map((name: Loose) => this.dialect.opcodes[name]);
-    const record = {
-        base: this.dialect.base,
-        blob: packTokens(encrypted.encrypted, this.dialect.base),
-        constants: this.constants.map(this.constantCellExpression.bind(this)),
-        opValues: opValues.map(literal),
-        references: this.references.map(this.referenceExpression.bind(this)),
-        seed: this.dialect.seed,
-        tag: encrypted.tag,
-        tokenCount: tokens.length
-    };
-    if (this.options.hashMesh && this.options.hashMesh.enabled) {
-        buildHashMeshRecord(record, encrypted.encrypted, opValues, this.constants, this.dialect, Object.assign({}, this.options.hashMesh, {
-            seed: this.options.seed
-        }));
-    }
-    return record;
-};
 
-function makeDialect(seedText: Loose) {
+    finish(): ProgramRecord {
+        this.fuseSuperinstructions();
+        const tokens = this.assemble();
+        const encrypted = encryptedStream(tokens, this.dialect.base, this.dialect.seed);
+        const opValues = OP_NAMES.map((name: OpName) => this.dialect.opcodes[name]);
+        const record: ProgramRecord = {
+            base: this.dialect.base,
+            blob: packTokens(encrypted.encrypted, this.dialect.base),
+            constants: this.constants.map(this.constantCellExpression.bind(this)),
+            opValues: opValues.map(literal),
+            references: this.references.map(this.referenceExpression.bind(this)),
+            seed: this.dialect.seed,
+            tag: encrypted.tag,
+            tokenCount: tokens.length
+        };
+        if (this.options.hashMesh.enabled) {
+            buildHashMeshRecord(record, encrypted.encrypted, opValues, this.constants, this.dialect, Object.assign({}, this.options.hashMesh, {
+                seed: this.options.seed
+            }));
+        }
+        return record;
+    }
+}
+
+function makeDialect(seedText: string): Dialect {
     const seed = hashSeed(seedText);
     const next = makeRng(seed);
-    const values = shuffle(Array.from({ length: OP_NAMES.length }, function (_: Loose, index: Loose) { return index + 1; }), next);
-    const opcodes: Record<string, Loose> = {};
-    OP_NAMES.forEach(function (name: Loose, index: Loose) { opcodes[name] = values[index]; });
+    const values = shuffle(Array.from({ length: OP_NAMES.length }, function (_: unknown, index: number) { return index + 1; }), next);
+    const opcodes = Object.create(null) as Record<OpName, number>;
+    OP_NAMES.forEach(function (name: OpName, index: number) { opcodes[name] = values[index]; });
     return { base: BASES[next() % BASES.length], next: next, opcodes: opcodes, seed: seed };
 }
 
-function vmCall(record: Loose, next: Loose, refs: Loose) {
-    refs = refs || {};
+function vmCall(record: ProgramRecord, next: () => number, refs: VmCallRefs = {}): AstNode {
     return call(identifier("toildefender$numericVmRun"), [
         bigintExpression(record.blob, next),
         literal(record.base),
@@ -1130,96 +1341,103 @@ function vmCall(record: Loose, next: Loose, refs: Loose) {
     ]);
 }
 
-function resolveOptions(options: Loose) {
-    return Object.assign({
-        enabled: false,
-        maxFunctionSize: 120,
-        maxFunctions: Infinity,
-        minFunctionSize: 1,
-        mode: "balanced",
-        ratio: 1,
-        seed: "toildefender-numeric-vm",
+function objectOptions(value: unknown): Record<string, unknown> {
+    return typeof value == "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+function resolveOptions(options: unknown): NumericVmResolvedOptions {
+    const input = objectOptions(options);
+    const hashMeshInput = objectOptions(input.hashMesh);
+    return {
+        enabled: input.enabled === true,
+        excludeNames: Array.isArray(input.excludeNames) ? input.excludeNames.map(String) : [],
+        maxFunctionSize: typeof input.maxFunctionSize == "number" ? input.maxFunctionSize : 120,
+        maxFunctions: normalizeMaxFunctions(input.maxFunctions ?? Infinity),
+        minFunctionSize: typeof input.minFunctionSize == "number" ? input.minFunctionSize : 1,
+        mode: typeof input.mode == "string" ? input.mode : "balanced",
+        ratio: normalizeRatio(input.ratio ?? 1),
+        seed: typeof input.seed == "string" ? input.seed : "toildefender-numeric-vm",
         hashMesh: {
-            bindToVmState: true,
-            chaffRatio: 0.55,
-            deriveDialectFromMesh: false,
-            enabled: false,
-            encodeChaff: true,
-            mode: "balanced",
-            serverBound: false,
-            unlock: "per-function"
+            bindToVmState: hashMeshInput.bindToVmState !== false,
+            chaffRatio: typeof hashMeshInput.chaffRatio == "number" ? hashMeshInput.chaffRatio : 0.55,
+            deriveDialectFromMesh: hashMeshInput.deriveDialectFromMesh === true,
+            enabled: hashMeshInput.enabled === true,
+            encodeChaff: hashMeshInput.encodeChaff !== false,
+            mode: typeof hashMeshInput.mode == "string" ? hashMeshInput.mode : "balanced",
+            serverBound: hashMeshInput.serverBound === true,
+            unlock: typeof hashMeshInput.unlock == "string" ? hashMeshInput.unlock : "per-function"
         },
-        virtualize: "marked"
-    }, options || {});
+        virtualize: typeof input.virtualize == "string" ? input.virtualize : "marked"
+    };
 }
 
 export default class NumericVm {
-    logger: Loose;
-    options: Loose;
-    count: Loose;
+    logger: LoggerLike;
+    options: NumericVmResolvedOptions;
+    count: number;
 
-    constructor(logger: Loose, options: Loose) {
+    constructor(logger: LoggerLike, options: unknown) {
         this.logger = logger;
         this.options = resolveOptions(options);
-        this.options.ratio = normalizeRatio(this.options.ratio);
-        this.options.maxFunctions = normalizeMaxFunctions(this.options.maxFunctions);
         this.count = 0;
     }
 
-    shouldTry(node: Loose) {
-        if (!this.options.enabled || !estest.isFunction(node) || node.generator || node.async) return false;
-        if (!node.body || node.body.type !== "BlockStatement") return false;
-        if (functionName(node).indexOf("toildefender$numericVm") === 0) return false;
-        const bodySize = node.body.body.length;
+    shouldTry(node: AstNode): boolean {
+        if (!this.options.enabled || !estest.isFunction(node) || nodeFlag(node, "generator") || nodeFlag(node, "async")) return false;
+        const body = childNode(node, "body");
+        if (!body || body.type !== "BlockStatement") return false;
+        if (nodeFlag(node, "toildefender$noNumericVm")) return false;
+        const name = functionName(node);
+        if (name.indexOf("toildefender$numericVm") === 0) return false;
+        if (this.options.excludeNames.indexOf(name) >= 0) return false;
+        const bodySize = bodyArray(body).length;
         if (bodySize < this.options.minFunctionSize || bodySize > this.options.maxFunctionSize) return false;
         if (this.options.virtualize === "all-supported") return true;
         if (this.options.virtualize === "heuristic") return bodySize >= this.options.minFunctionSize;
         return false;
     }
 
-    apply(ast: Loose) {
+    apply(ast: AstNode): AstNode {
         assert.ok(estest.isNode(ast));
         if (!this.options.enabled) return ast;
 
-        const runtime = markNumericVmInternal(replaceStaticBigIntCalls(esprima.parseScript(RUNTIME) as Loose));
-        const self = this;
+        const runtime = markNumericVmInternal(replaceStaticBigIntCalls(esprima.parseScript(RUNTIME) as unknown as AstNode));
         let transformed = 0;
         let candidateIndex = 0;
-        const dataDeclarations: Loose[] = [];
+        const dataDeclarations: AstNode[] = [];
         const trace = typeof process !== "undefined" && process.env && process.env.TOILDEFENDER_NUMERIC_VM_TRACE === "1";
 
-        ast = traverser.traverse(ast, [], function (node: Loose) {
-            if (!self.shouldTry(node)) return node;
+        ast = traverser.traverse(ast, [], (node: AstNode) => {
+            if (!this.shouldTry(node)) return node;
             const currentIndex = candidateIndex;
             candidateIndex += 1;
-            if (transformed >= self.options.maxFunctions) return node;
-            if (self.options.ratio <= 0 || selectionScore(self.options, node, currentIndex) >= self.options.ratio) return node;
+            if (transformed >= this.options.maxFunctions) return node;
+            if (this.options.ratio <= 0 || selectionScore(this.options, node, currentIndex) >= this.options.ratio) return node;
             try {
-                const originalBodySize = node.body && node.body.body ? node.body.body.length : 0;
-                const dialect = makeDialect(self.options.seed + ":" + transformed + ":" + functionName(node));
-                const CompilerCtor: Loose = Compiler;
-                const record = new CompilerCtor(node, dialect, self.options).compile();
-                const dataName = "toildefender$numericVmData$" + transformed;
-                const opsName = "toildefender$numericVmOps$" + transformed;
-                const meshName = "toildefender$numericVmMesh$" + transformed;
-                const cacheName = "toildefender$numericVmCache$" + transformed;
-                let declarations;
-                declarations = [
+                const body = childNode(node, "body");
+                const originalBodySize = body ? bodyArray(body).length : 0;
+                const dialect = makeDialect(`${this.options.seed}:${transformed}:${functionName(node)}`);
+                const record = new Compiler(node, dialect, this.options).compile();
+                const dataName = `toildefender$numericVmData$${transformed}`;
+                const opsName = `toildefender$numericVmOps$${transformed}`;
+                const meshName = `toildefender$numericVmMesh$${transformed}`;
+                const cacheName = `toildefender$numericVmCache$${transformed}`;
+                const declarations = [
                     variableDeclaration(dataName, arrayExpression(record.constants)),
                     variableDeclaration(opsName, arrayExpression(record.opValues)),
                     variableDeclaration(meshName, record.mesh ? meshExpression(record.mesh) : literal(null)),
                     variableDeclaration(cacheName, arrayExpression([]))
                 ];
-                declarations.forEach(function (declaration: Loose) {
-                    declaration.toildefender$numericVmInternal = true;
+                declarations.forEach(function (declaration: AstNode) {
+                    setNodeField(declaration, "toildefender$numericVmInternal", true);
                     dataDeclarations.push(declaration);
                 });
-                node.body = { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next, {
+                setNodeField(node, "body", { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next, {
                     cache: identifier(cacheName),
                     constants: identifier(dataName),
                     mesh: identifier(meshName),
                     ops: identifier(opsName)
-                })) ] };
+                })) ] });
                 transformed += 1;
                 if (trace) {
                     console.error(JSON.stringify({
@@ -1232,15 +1450,15 @@ export default class NumericVm {
                 }
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
-                if (self.options.virtualize === "all-supported") self.logger.warn("numeric_vm skipped " + functionName(node) + ": " + message);
+                if (this.options.virtualize === "all-supported") this.logger.warn("numeric_vm skipped " + functionName(node) + ": " + message);
             }
             return node;
         });
 
         if (transformed > 0) {
-            ast.body = runtime.body.concat(dataDeclarations).concat(ast.body);
+            setNodeField(ast, "body", bodyArray(runtime).concat(dataDeclarations).concat(bodyArray(ast)));
         }
         this.count = transformed;
         return ast;
     }
-};
+}

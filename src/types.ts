@@ -43,6 +43,7 @@ export interface HashMeshOptions {
 
 export interface NumericVmOptions {
     enabled?: boolean;
+    excludeNames?: string[];
     hashMesh?: HashMeshOptions;
     maxFunctionSize?: number;
     maxFunctions?: number;
@@ -97,8 +98,8 @@ export interface ToilDefenderResult {
     map?: string;
 }
 
-export type Loose = any;
-export type AstNode = Record<string, Loose> & { type: string };
+export type Loose = unknown;
+export type AstNode = Record<string, unknown> & { type: string };
 export type AstStackFrame = {
     node: AstNode;
     key?: string | undefined;

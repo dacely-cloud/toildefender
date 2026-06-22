@@ -1,7 +1,6 @@
 import assert from "assert";
 import * as esprima from "esprima";
 import type { AstNode, LoggerLike } from "../types.js";
-import type { Loose } from "../types.js";
 
 export default class LiteralObfuscator {
     logger: LoggerLike;
@@ -25,7 +24,7 @@ export default class LiteralObfuscator {
         const getCharCode = function (x: string): number { return x.charCodeAt(0); };
         const chars = input.split("").map(getCharCode);
 
-        const out: Loose[] = [];
+        const out: number[] = [];
         for (let i = 0; i < input.length; i += 2) {
             const n = chars[i] | (chars[i + 1] << 16);
             out.push(n);
@@ -34,7 +33,7 @@ export default class LiteralObfuscator {
         return esprima.parseScript(`
         var input = ${JSON.stringify(out)};
         input.map(function(x) { return String.fromCharCode(x & ~0 >>> 16) + String.fromCharCode(x >> 16); }).join("");
-        `) as AstNode;
+        `) as unknown as AstNode;
     }
     
 };

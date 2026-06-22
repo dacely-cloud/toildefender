@@ -1,19 +1,76 @@
 import assert from "assert";
-import _ from "lodash";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import utils from "../utils.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
+
+function astArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function mutableBody(node: AstNode): AstNode[] {
+    const body = (node as { body?: unknown }).body;
+    if (Array.isArray(body)) {
+        return body as AstNode[];
+    }
+
+    const nextBody: AstNode[] = [];
+    (node as { body?: AstNode[] }).body = nextBody;
+    return nextBody;
+}
+
+function literalStringValue(node: AstNode): string | null {
+    const value = (node as { value?: unknown }).value;
+    return typeof value == "string" ? value : null;
+}
+
+function isComputed(node: AstNode): boolean {
+    return (node as { computed?: unknown }).computed === true;
+}
+
+function isNumericVmInternalFunction(stack: AstStackFrame[]): boolean {
+    return stack.some((frame) => (frame.node as { toildefender$numericVmInternal?: unknown }).toildefender$numericVmInternal === true);
+}
+
+function isUnencodedPropertyKey(stack: AstStackFrame[]): boolean {
+    const parentFrame = stack[1];
+    if (!parentFrame || parentFrame.node.type != "Property") {
+        return false;
+    }
+    return parentFrame.key == "key" && !isComputed(parentFrame.node);
+}
+
+function templateCookedValue(quasi: AstNode): string {
+    const value = (quasi as { value?: unknown }).value;
+    if (typeof value == "object" && value !== null) {
+        const cooked = (value as { cooked?: unknown }).cooked;
+        return typeof cooked == "string" ? cooked : "";
+    }
+    return "";
+}
+
+function regexInfo(node: AstNode): { flags: string; pattern: string } | null {
+    const regex = (node as { regex?: unknown }).regex;
+    if (typeof regex != "object" || regex === null) {
+        return null;
+    }
+    const pattern = (regex as { pattern?: unknown }).pattern;
+    const flags = (regex as { flags?: unknown }).flags;
+    return {
+        pattern: typeof pattern == "string" ? pattern : "",
+        flags: typeof flags == "string" ? flags : ""
+    };
+}
 
 /**
  * Generate string generator from string.
  * @param {string} str
  * @returns {Node}
  */
-function makeStringGenerator(str: Loose) {
+function makeStringGenerator(str: string): AstNode {
     assert.equal(typeof str, "string");
     
-    const fragments: Loose[] = [];
+    const fragments: string[] = [];
     
     while (str.length > 0) {
         const len = utils.random(1, 5);
@@ -21,28 +78,28 @@ function makeStringGenerator(str: Loose) {
         str = str.substring(len);
     }
     
-    let block: Loose;
-    block = {
+    const body: AstNode[] = [
+        {
+            type: "VariableDeclaration",
+            kind: "var",
+            declarations: [
+                {
+                    type: "VariableDeclarator",
+                    id: { type: "Identifier", name: "str" },
+                    init: { type: "Literal", value: "" }
+                }
+            ]
+        }
+    ];
+    const block: AstNode = {
         type: "BlockStatement",
-        body: [
-            {
-                type: "VariableDeclaration",
-                kind: "var",
-                declarations: [
-                    {
-                        type: "VariableDeclarator",
-                        id: { type: "Identifier", name: "str" },
-                        init: { type: "Literal", value: "" }
-                    }
-                ]
-            }
-        ]
+        body
     };
     
-    fragments.forEach((fragment: Loose) => {
+    fragments.forEach((fragment: string) => {
         const decoded = makeStringByteArrayCall(fragment);
         
-        block.body.push({
+        body.push({
             type: "ExpressionStatement",
             expression: {
                 type: "BinaryExpression",
@@ -53,7 +110,7 @@ function makeStringGenerator(str: Loose) {
         });
     });
     
-    block.body.push({
+    body.push({
         type: "ReturnStatement",
         argument: { type: "Identifier", name: "str" }
     });
@@ -74,7 +131,7 @@ function makeStringGenerator(str: Loose) {
  * @param {string} str
  * @returns {Node}
  */
-function makeStringUnicode(str: Loose) {
+function makeStringUnicode(str: string): AstNode {
     assert.equal(typeof str, "string");
     
     return {
@@ -83,7 +140,7 @@ function makeStringUnicode(str: Loose) {
         arguments: [
             {
                 type: "Literal",
-                value: "\"" + str.split("").map((x: Loose) => "\\x" + x.charCodeAt().toString(16)).join("") + "\""
+                value: "\"" + str.split("").map((x: string) => "\\x" + x.charCodeAt(0).toString(16)).join("") + "\""
             }
         ]
     };
@@ -94,7 +151,7 @@ function makeStringUnicode(str: Loose) {
  * @param {string} str
  * @returns {Node}
  */
-function makeStringUnescape(str: Loose) {
+function makeStringUnescape(str: string): AstNode {
     assert.equal(typeof str, "string");
     
     return {
@@ -103,7 +160,7 @@ function makeStringUnescape(str: Loose) {
         arguments: [
             {
                 type: "Literal",
-                value: str.split("").map((x: Loose) => "%" + x.charCodeAt().toString(16)).join("")
+                value: str.split("").map((x: string) => "%" + x.charCodeAt(0).toString(16)).join("")
             }
         ]
     };
@@ -114,7 +171,7 @@ function makeStringUnescape(str: Loose) {
  * @param {string} cha
  * @returns {Node}
  */
-function makeCharByte(cha: Loose) {
+function makeCharByte(cha: string): AstNode {
     assert.equal(typeof cha, "string");
     assert.equal(cha.length, 1);
     
@@ -140,36 +197,24 @@ function makeCharByte(cha: Loose) {
  * @param {string} str
  * @returns {Node}
  */
-function makeStringByteArrayCall(str: Loose) {
+function makeStringByteArrayCall(str: string): AstNode {
     assert.equal(typeof str, "string");
     
     return {
         type: "CallExpression",
         callee: { type: "Identifier", name: "toildefender$fromCharCodes" },
-        arguments: str.split("").map((x: Loose) => ({ type: "Literal", value: x.charCodeAt() }))
+        arguments: str.split("").map((x: string) => ({ type: "Literal", value: x.charCodeAt(0) }))
     };
 }
 
-function isUnencodedPropertyKey(stack: Loose) {
-    const parentFrame = stack[1];
-    if (!parentFrame || parentFrame.node.type != "Property") {
-        return false;
-    }
-    return parentFrame.key == "key" && parentFrame.node.computed !== true;
-}
-
-function isNumericVmInternalFunction(stack: Loose) {
-    return stack.some((frame: Loose) => frame.node && frame.node.toildefender$numericVmInternal === true);
-}
-
-function makeStringExpression(str: Loose) {
+function makeStringExpression(str: string): AstNode {
     if (str.length == 0) {
         return { type: "Literal", value: "" };
     }
     return makeStringGenerator(str);
 }
 
-function makeStringCallExpression(expr: Loose) {
+function makeStringCallExpression(expr: AstNode): AstNode {
     return {
         type: "CallExpression",
         callee: { type: "Identifier", name: "String" },
@@ -177,51 +222,53 @@ function makeStringCallExpression(expr: Loose) {
     };
 }
 
-function concatExpressions(left: Loose, right: Loose) {
+function concatExpressions(left: AstNode, right: AstNode): AstNode {
     return {
         type: "BinaryExpression",
         operator: "+",
-        left: left,
-        right: right
+        left,
+        right
     };
 }
 
-function makeTemplateExpression(node: Loose) {
+function makeTemplateExpression(node: AstNode): AstNode {
     assert.equal(node.type, "TemplateLiteral");
 
-    let expression;
-    for (let i = 0; i < node.quasis.length; i += 1) {
-        const quasi = node.quasis[i];
-        const cooked = quasi.value && typeof quasi.value.cooked == "string" ? quasi.value.cooked : "";
-        const quasiExpression = makeStringExpression(cooked);
+    const quasis = astArray((node as { quasis?: unknown }).quasis);
+    const expressions = astArray((node as { expressions?: unknown }).expressions);
+    let expression: AstNode | null = null;
+    for (let i = 0; i < quasis.length; i += 1) {
+        const quasiExpression = makeStringExpression(templateCookedValue(quasis[i]));
         expression = expression ? concatExpressions(expression, quasiExpression) : quasiExpression;
 
-        if (i < node.expressions.length) {
-            expression = concatExpressions(expression, makeStringCallExpression(node.expressions[i]));
+        const templateExpression = expressions[i];
+        if (templateExpression) {
+            expression = concatExpressions(expression, makeStringCallExpression(templateExpression));
         }
     }
 
     return expression || { type: "Literal", value: "" };
 }
 
-function makeRegexExpression(node: Loose) {
+function makeRegexExpression(node: AstNode): AstNode {
     assert.equal(node.type, "Literal");
-    assert.ok(node.regex);
+    const regex = regexInfo(node);
+    assert.ok(regex);
 
     return {
         type: "NewExpression",
         callee: { type: "Identifier", name: "RegExp" },
         arguments: [
-            makeStringExpression(node.regex.pattern || ""),
-            makeStringExpression(node.regex.flags || "")
+            makeStringExpression(regex.pattern),
+            makeStringExpression(regex.flags)
         ]
     };
 }
 
 export default class Literals {
-    logger: Loose;
+    logger: LoggerLike;
 
-    constructor (logger: Loose) {
+    constructor (logger: LoggerLike) {
         this.logger = logger;
     }
     
@@ -230,22 +277,23 @@ export default class Literals {
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    extractStrings (ast: Loose) {
+    extractStrings (ast: AstNode): AstNode {
         assert.ok(estest.isNode(ast));
         
-        const global = { type: "Identifier", name: "$$strings" };
+        const global: AstNode = { type: "Identifier", name: "$$strings" };
         
-        const strings: Loose[] = [];
-        const stringMap: Record<string, Loose> = {};
+        const strings: AstNode[] = [];
+        const stringMap: Record<string, number> = {};
         
-        ast = traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        ast = traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isNumericVmInternalFunction(stack)) {
                 return node;
             }
-            if (node.type == "Literal" && typeof node.value == "string") {
-                let idx = stringMap["_" + node.value];
+            const value = literalStringValue(node);
+            if (node.type == "Literal" && value !== null) {
+                let idx = stringMap["_" + value];
                 if (!idx) {
-                    stringMap["_" + node.value] = idx = strings.length;
+                    stringMap["_" + value] = idx = strings.length;
                     strings.push(node);
                 }
                 
@@ -260,7 +308,7 @@ export default class Literals {
             return node;
         });
         
-        ast.body.splice(0, 0, {
+        mutableBody(ast).splice(0, 0, {
             type: "VariableDeclaration",
             kind: "var",
             declarations: [
@@ -283,24 +331,25 @@ export default class Literals {
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    generateStrings (ast: Loose) {
+    generateStrings (ast: AstNode): AstNode {
         assert.ok(estest.isNode(ast));
         
-        ast = traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        ast = traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isNumericVmInternalFunction(stack)) {
                 return node;
             }
             if (node.type == "TemplateLiteral") {
                 return makeTemplateExpression(node);
             }
-            if (node.type == "Literal" && node.regex) {
+            if (node.type == "Literal" && regexInfo(node)) {
                 return makeRegexExpression(node);
             }
+            const value = literalStringValue(node);
             if (node.type == "Literal"
-                && typeof node.value == "string"
+                && value !== null
                 && stack.length > 1
                 && !isUnencodedPropertyKey(stack)) {
-                return makeStringGenerator(node.value);
+                return makeStringGenerator(value);
             }
             
             return node;

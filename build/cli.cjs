@@ -1,16 +1,15 @@
 Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
-const require_preprocessing = require("./preprocessing-2QLUFdhd.cjs");
-const require_obfuscator = require("./obfuscator-G_C-fELL.cjs");
+const require_obfuscator = require("./obfuscator-BEQrQtUs.cjs");
 let lodash = require("lodash");
-lodash = require_preprocessing.__toESM(lodash, 1);
+lodash = require_obfuscator.__toESM(lodash, 1);
 let fs = require("fs");
-fs = require_preprocessing.__toESM(fs, 1);
+fs = require_obfuscator.__toESM(fs, 1);
 let os = require("os");
-os = require_preprocessing.__toESM(os, 1);
+os = require_obfuscator.__toESM(os, 1);
 let path = require("path");
-path = require_preprocessing.__toESM(path, 1);
+path = require_obfuscator.__toESM(path, 1);
 let minimist = require("minimist");
-minimist = require_preprocessing.__toESM(minimist, 1);
+minimist = require_obfuscator.__toESM(minimist, 1);
 //#region src/cli.ts
 function stringArray(value) {
 	if (value === void 0) return [];

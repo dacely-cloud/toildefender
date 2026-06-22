@@ -1,11 +1,16 @@
-import type { Loose } from "../types.js";
-export default class Identifiers {
-    logger: Loose;
-    esutils: Loose;
-    constructor(logger: Loose);
-    hasParentAcceptingUndefined(node: Loose): any;
-    computeProperties(ast: Loose): any;
-    arrayizeObjects(ast: Loose, options: Loose): any;
-    moveIdentifiers(ast: Loose, scopeManager: Loose): import("../types.js").AstNode;
-    moveLiterals(ast: Loose, scopeManager: Loose): any;
+import ESUtils from "../esutils.js";
+import type { AstNode, LoggerLike } from "../types.js";
+interface ArrayizeObjectOptions {
+    objectPacking?: boolean;
 }
+export default class Identifiers {
+    logger: LoggerLike;
+    esutils: ESUtils;
+    constructor(logger: LoggerLike);
+    hasParentAcceptingUndefined(node: AstNode): boolean;
+    computeProperties(ast: AstNode): AstNode;
+    arrayizeObjects(ast: AstNode, options?: ArrayizeObjectOptions): AstNode;
+    moveIdentifiers(ast: AstNode, scopeManager: unknown): AstNode;
+    moveLiterals(ast: AstNode, _scopeManager: unknown): AstNode;
+}
+export {};

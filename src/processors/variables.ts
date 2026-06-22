@@ -1,12 +1,88 @@
 import assert from "assert";
-import _ from "lodash";
 import estest from "../estest.js";
 import ESUtils from "../esutils.js";
 import traverser from "../traverser.js";
 import utils from "../utils.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike, ScopeLike } from "../types.js";
 
-function isReferenceIdentifier(node: Loose, stack: Loose) {
+interface VariableReference {
+    identifier: AstNode;
+    resolved?: ScopeVariable | null;
+}
+
+interface VariableDef {
+    name?: AstNode;
+    node: AstNode;
+    type: string;
+}
+
+interface ScopeVariable {
+    defs: VariableDef[];
+    identifiers: AstNode[];
+    name: string;
+    references: VariableReference[];
+    tainted?: boolean;
+}
+
+interface VariableScope extends ScopeLike {
+    isStatic?: () => boolean;
+    references: VariableReference[];
+    variables: ScopeVariable[];
+}
+
+interface VariableScopeManager {
+    scopes: VariableScope[];
+}
+
+function nodeFields(node: AstNode): Record<string, unknown> {
+    return node as unknown as Record<string, unknown>;
+}
+
+function astArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = nodeFields(node)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function setChildValue(node: AstNode, key: string, value: unknown): void {
+    nodeFields(node)[key] = value;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function setNodeName(node: AstNode, name: string): void {
+    (node as { name?: string }).name = name;
+}
+
+function nodeComputed(node: AstNode): boolean {
+    return (node as { computed?: unknown }).computed === true;
+}
+
+function nodeFlag(node: AstNode, key: "async" | "expression" | "generator" | "toildefender$numericVmInternal"): boolean {
+    return (node as Record<string, unknown>)[key] === true;
+}
+
+function nodeParams(node: AstNode): AstNode[] {
+    return astArray(nodeFields(node).params);
+}
+
+function parentOf(node: AstNode): AstNode | null {
+    const parent = (node as { toildefender$parent?: unknown }).toildefender$parent;
+    return estest.isNode(parent) ? parent : null;
+}
+
+function scopeList(scopeManager: unknown): VariableScope[] {
+    const scopes = (scopeManager as { scopes?: unknown }).scopes;
+    return Array.isArray(scopes) ? (scopes as VariableScope[]) : [];
+}
+
+function isReferenceIdentifier(node: AstNode, stack: AstStackFrame[]): boolean {
     const parentFrame = stack[1];
     if (!parentFrame) {
         return true;
@@ -27,13 +103,13 @@ function isReferenceIdentifier(node: Loose, stack: Loose) {
     if (parent.type == "CatchClause" && key == "param") {
         return false;
     }
-    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) {
+    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && !nodeComputed(parent)) {
         return false;
     }
-    if (parent.type == "Property" && key == "key" && parent.computed === false) {
+    if (parent.type == "Property" && key == "key" && !nodeComputed(parent)) {
         return false;
     }
-    if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && parent.computed === false) {
+    if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && !nodeComputed(parent)) {
         return false;
     }
     if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") {
@@ -43,18 +119,24 @@ function isReferenceIdentifier(node: Loose, stack: Loose) {
     return true;
 }
 
-function functionExpressionUsesOwnName(node: Loose) {
+function functionExpressionUsesOwnName(node: AstNode): boolean {
     assert.equal(node.type, "FunctionExpression");
 
-    if (!node.id) {
+    const id = childNode(node, "id");
+    const name = nodeName(id);
+    if (!name) {
         return false;
     }
 
-    const name = node.id.name;
+    const body = childNode(node, "body");
+    if (!body) {
+        return false;
+    }
+
     let used = false;
 
-    traverser.traverse(node.body, [], (child: Loose, stack: Loose) => {
-        if (child.type == "Identifier" && child.name == name && isReferenceIdentifier(child, stack)) {
+    traverser.traverse(body, [], (child: AstNode, stack: AstStackFrame[]) => {
+        if (child.type == "Identifier" && nodeName(child) == name && isReferenceIdentifier(child, stack)) {
             used = true;
         }
         return child;
@@ -63,40 +145,40 @@ function functionExpressionUsesOwnName(node: Loose) {
     return used;
 }
 
-function isClassMethodScope(scope: Loose) {
-    let node = scope && scope.block;
+function isClassMethodScope(scope: VariableScope): boolean {
+    let node: AstNode | null = scope.block;
     while (node) {
         if (node.type == "MethodDefinition" || node.type == "ClassBody") {
             return true;
         }
-        node = node.toildefender$parent;
+        node = parentOf(node);
     }
     return false;
 }
 
-function isNumericVmInternalNode(node: Loose) {
+function isNumericVmInternalNode(node: AstNode | null): boolean {
     while (node) {
-        if (node.toildefender$numericVmInternal === true) {
+        if (nodeFlag(node, "toildefender$numericVmInternal")) {
             return true;
         }
-        node = node.toildefender$parent;
+        node = parentOf(node);
     }
     return false;
 }
 
-function isNumericVmInternalScope(scope: Loose) {
-    return isNumericVmInternalNode(scope && scope.block);
+function isNumericVmInternalScope(scope: VariableScope): boolean {
+    return isNumericVmInternalNode(scope.block);
 }
 
-function isNumericVmInternalVariable(variable: Loose) {
-    return variable.defs.some((def: Loose) => isNumericVmInternalNode(def.node));
+function isNumericVmInternalVariable(variable: ScopeVariable): boolean {
+    return variable.defs.some((def: VariableDef) => isNumericVmInternalNode(def.node));
 }
 
 export default class Variables {
-    logger: Loose;
-    esutils: Loose;
+    logger: LoggerLike;
+    esutils: ESUtils;
 
-    constructor (logger: Loose) {
+    constructor (logger: LoggerLike) {
         this.logger = logger;
         this.esutils = new ESUtils(logger);
     }
@@ -108,13 +190,13 @@ export default class Variables {
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    removeFunctionExpressionIds (ast: Loose) {
-        return traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+    removeFunctionExpressionIds (ast: AstNode): AstNode {
+        return traverser.traverse(ast, [], (node: AstNode) => {
             if (isNumericVmInternalNode(node)) {
                 return node;
             }
-            if (node.type == "FunctionExpression" && node.id && !functionExpressionUsesOwnName(node)) {
-                node.id = null;
+            if (node.type == "FunctionExpression" && childNode(node, "id") && !functionExpressionUsesOwnName(node)) {
+                setChildValue(node, "id", null);
             }
             return node;
         });
@@ -128,17 +210,17 @@ export default class Variables {
      * @param {Node} ast Root node
      * @param {ScopeManager} scopeManager Scope manager
      */
-    functionDeclarationToExpression (ast: Loose, scopeManager: Loose) {
+    functionDeclarationToExpression (ast: AstNode, scopeManager: unknown): void {
         assert.ok(estest.isNode(ast));
         
         this.esutils.setParentsRecursive(ast);
         
-        scopeManager.scopes.forEach((scope: Loose) => {
+        scopeList(scopeManager).forEach((scope: VariableScope) => {
             if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
-            scope.variables.forEach((variable: Loose) => {
-                variable.defs.forEach((def: Loose) => {
+            scope.variables.forEach((variable: ScopeVariable) => {
+                variable.defs.forEach((def: VariableDef) => {
                     if (def.type == "FunctionName") {
                         assert(estest.isFunction(def.node));
                         /**
@@ -155,15 +237,15 @@ export default class Variables {
                                 declarations: [
                                     {
                                         type: "VariableDeclarator",
-                                        id: def.node.id,
+                                        id: childNode(def.node, "id"),
                                         init: {
                                             type: "FunctionExpression",
-                                            params: def.node.params,
-                                            body: def.node.body,
-                                            generator: def.node.generator === true,
-                                            expression: def.node.expression === true,
-                                            async: def.node.async === true,
-                                            toildefender$numericVmInternal: def.node.toildefender$numericVmInternal === true
+                                            params: nodeParams(def.node),
+                                            body: childNode(def.node, "body"),
+                                            generator: nodeFlag(def.node, "generator"),
+                                            expression: nodeFlag(def.node, "expression"),
+                                            async: nodeFlag(def.node, "async"),
+                                            toildefender$numericVmInternal: nodeFlag(def.node, "toildefender$numericVmInternal")
                                         }
                                     }
                                 ]
@@ -183,10 +265,10 @@ export default class Variables {
      * @param {Node} ast Root node
      * @param {ScopeManager} scopeManager Scope manager
      */
-    obfuscateIdentifiers (ast: Loose, scopeManager: Loose) {
-        const usedNames = new Set();
+    obfuscateIdentifiers (ast: AstNode, scopeManager: unknown): void {
+        const usedNames = new Set<string>();
 
-        function uniqueName(variable: Loose) {
+        function uniqueName(variable: ScopeVariable): string {
             const base = "$$var$" + utils.hash(variable);
             let name = base + "$" + variable.name;
             let counter = 0;
@@ -198,12 +280,12 @@ export default class Variables {
             return name;
         }
 
-        scopeManager.scopes.forEach((scope: Loose) => {
+        scopeList(scopeManager).forEach((scope: VariableScope) => {
             if (isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
-            if (scope.isStatic()) {
-                scope.variables.sort((a: Loose, b: Loose) => {
+            if (scope.isStatic?.()) {
+                scope.variables.sort((a: ScopeVariable, b: ScopeVariable) => {
                     if (a.tainted) {
                         return 1;
                     }
@@ -220,7 +302,7 @@ export default class Variables {
 
                     const name = uniqueName(variable);
 
-                    if (variable.defs.some((def: Loose) => def.type == "ClassName")) {
+                    if (variable.defs.some((def: VariableDef) => def.type == "ClassName")) {
                         continue;
                     }
 
@@ -235,12 +317,12 @@ export default class Variables {
 
                     for (const def of variable.identifiers) {
                         // change definition's name
-                        def.name = name;
+                        setNodeName(def, name);
                     }
 
-                    for (const ref of variable.references.filter((ref: Loose) => ref.resolved === variable)) {
+                    for (const ref of variable.references.filter((ref: VariableReference) => ref.resolved === variable)) {
                         // change reference's name
-                        ref.identifier.name = name;
+                        setNodeName(ref.identifier, name);
                     }
                 }
             }
@@ -260,31 +342,20 @@ export default class Variables {
      * @param {Node} ast Root node
      * @param {ScopeManager} scopeManager Scope manager
      */
-    redefineParameters (ast: Loose, scopeManager: Loose) {
-        function getArgumentIndex(method: Loose, identifier: Loose) {
-            assert(method.type == "FunctionDeclaration" || method.type == "FunctionExpression");
-            assert(identifier.type == "Identifier");
-            for (let i = 0; i < method.params.length; ++i) {
-                if (method.params[i].name == identifier.name) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-        
+    redefineParameters (ast: AstNode, scopeManager: unknown): void {
         const rng = new utils.UniqueRandomAlpha(3);
         
-        scopeManager.scopes.forEach((scope: Loose) => {
+        scopeList(scopeManager).forEach((scope: VariableScope) => {
             if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
-            scope.variables.forEach((variable: Loose) => {
+            scope.variables.forEach((variable: ScopeVariable) => {
                 if (isNumericVmInternalVariable(variable)) {
                     return;
                 }
-                variable.defs.forEach((def: Loose) => {
+                variable.defs.forEach((def: VariableDef) => {
                     if (def.type == "Parameter") {
-                        assert(def.name.type == "Identifier");
+                        assert(def.name?.type == "Identifier");
                         const name = "$$arg$" + rng.get();
                         
                         this.esutils.insertIntoScope(scope, {
@@ -299,8 +370,8 @@ export default class Variables {
                             ]
                         });
                         
-                        variable.references.forEach((reference: Loose) => {
-                            reference.identifier.name = name;
+                        variable.references.forEach((reference: VariableReference) => {
+                            setNodeName(reference.identifier, name);
                         });
                     }
                 });

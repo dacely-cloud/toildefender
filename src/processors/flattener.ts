@@ -1,18 +1,132 @@
 import assert from "assert";
-import events from "events";
-import _ from "lodash";
+import { EventEmitter } from "events";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import utils from "../utils.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
+
+interface RandomLike {
+    get(): number;
+}
+
+interface JumpTarget {
+    id: number;
+    label: string | null;
+}
+
+interface ProgramOptions {
+    async?: boolean;
+    generator?: boolean;
+    invoke?: boolean;
+    name?: string;
+}
+
+interface ScopeObjectInfo {
+    max: number;
+    offset: number;
+}
+
+function nodeFields(node: AstNode): Record<string, unknown> {
+    return node as unknown as Record<string, unknown>;
+}
+
+function nodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function bodyArray(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).body);
+}
+
+function mutableBody(node: AstNode): AstNode[] {
+    const body = nodeFields(node).body;
+    if (Array.isArray(body)) {
+        return body as AstNode[];
+    }
+    const nextBody: AstNode[] = [];
+    nodeFields(node).body = nextBody;
+    return nextBody;
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = nodeFields(node)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function requiredChild(node: AstNode, key: string): AstNode {
+    const child = childNode(node, key);
+    assert.ok(child, `Missing ${node.type}.${key}`);
+    return child;
+}
+
+function setNodeField(node: AstNode, key: string, value: unknown): void {
+    nodeFields(node)[key] = value;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function setNodeName(node: AstNode, name: string): void {
+    (node as { name?: string }).name = name;
+}
+
+function nodeValue(node: AstNode | null): unknown {
+    return (node as { value?: unknown } | null)?.value;
+}
+
+function setNodeValue(node: AstNode, value: unknown): void {
+    (node as { value?: unknown }).value = value;
+}
+
+function nodeFlag(node: AstNode, key: "toildefender$followsSlicingArguments" | "toildefender$reassigningArguments" | "toildefender$scopeObject" | "toildefender$scopeObjectReference"): boolean {
+    return (node as Record<string, unknown>)[key] === true;
+}
+
+function nodeDeclarations(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).declarations);
+}
+
+function switchCases(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).cases);
+}
+
+function labelName(node: AstNode): string | null {
+    return nodeName(childNode(node, "label"));
+}
+
+function last<T>(items: T[]): T | undefined {
+    return items[items.length - 1];
+}
+
+function shuffled<T>(items: T[]): T[] {
+    const result = items.slice();
+    for (let i = result.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = result[i];
+        result[i] = result[j];
+        result[j] = tmp;
+    }
+    return result;
+}
+
+function switchCaseTestValue(node: AstNode): unknown {
+    return nodeValue(childNode(node, "test"));
+}
 
 /**
  * Push a SwitchCase onto an array while removing all identical SwitchCases
  * @param {SwitchCase[]} arr
  * @param {SwitchCase} elem
  */
-function pushUniqSwitchCase(arr: Loose, elem: Loose) {
-    _.remove(arr, (x: Loose) => x.test.value == elem.test.value);
+function pushUniqSwitchCase(arr: AstNode[], elem: AstNode): void {
+    const value = switchCaseTestValue(elem);
+    for (let i = arr.length - 1; i >= 0; i -= 1) {
+        if (switchCaseTestValue(arr[i]) == value) {
+            arr.splice(i, 1);
+        }
+    }
     arr.push(elem);
 }
 
@@ -21,16 +135,19 @@ function pushUniqSwitchCase(arr: Loose, elem: Loose) {
  * @param entries {SwitchCase[]} Array of the unshuffled cases
  * @returns {SwitchCase[]} New array of the shuffled cases
  */
-function shuffleSwitchCases(entries: Loose) {
-    let groups: Loose[] = [], stack: Loose[] = [];
-    function clearStack() {
+function shuffleSwitchCases(entries: AstNode[]): AstNode[] {
+    const groups: AstNode[][] = [];
+    let stack: AstNode[] = [];
+
+    function clearStack(): void {
         if (stack.length > 0) {
             groups.push(stack);
             stack = [];
         }
     }
-    entries.forEach((entry: Loose) => {
-        const breaks = entry.consequent.some((x: Loose) => x.type == "BreakStatement");
+
+    entries.forEach((entry: AstNode) => {
+        const breaks = bodyArray(entry).some((x: AstNode) => x.type == "BreakStatement");
         if (breaks) {
             clearStack();
             groups.push([ entry ]);
@@ -39,7 +156,7 @@ function shuffleSwitchCases(entries: Loose) {
         }
     });
     clearStack();
-    return Array.prototype.concat.apply([], _.shuffle(groups));
+    return shuffled(groups).flat();
 }
 
 /**
@@ -47,22 +164,23 @@ function shuffleSwitchCases(entries: Loose) {
  * @param {BlockStatement} node Root BlockStatement
  * @returns {BlockStatement} Merged BlockStatement
  */
-function mergeNestedBlocks(node: Loose) {
+function mergeNestedBlocks(node: AstNode): AstNode {
     assert(estest.isNode(node));
     
-    function getBlockBodys(node: Loose) {
-        if (node.type == "Program" || node.type == "BlockStatement") {
-            const stmts: Loose[] = [];
-            node.body.forEach((stmt: Loose) => utils.push(stmts, getBlockBodys(stmt)));
+    function getBlockBodies(child: AstNode): AstNode[] {
+        if (child.type == "Program" || child.type == "BlockStatement") {
+            const stmts: AstNode[] = [];
+            bodyArray(child).forEach((stmt: AstNode) => {
+                stmts.push(...getBlockBodies(stmt));
+            });
             return stmts;
-        } else {
-            return [ node ];
         }
+        return [ child ];
     }
     
     return {
         type: node.type,
-        body: getBlockBodys(node)
+        body: getBlockBodies(node)
     };
 }
 
@@ -71,8 +189,9 @@ function mergeNestedBlocks(node: Loose) {
  * @param {Node[]} nodes Array of statements
  * @returns {Statement[]} Array of Statements
  */
-function splitBlocks(nodes: Loose) {
-    let stack: Loose[] = [], output: Loose[] = [];
+function splitBlocks(nodes: AstNode[]): AstNode[] {
+    let stack: AstNode[] = [];
+    const output: AstNode[] = [];
     for (let i = 0; i < nodes.length; ++i) {
         if (estest.isCompoundStatement(nodes[i])) {
             if (stack.length > 0) {
@@ -101,19 +220,68 @@ function splitBlocks(nodes: Loose) {
     return output;
 }
 
-export default class Flattener {
-    logger: Loose;
-    rng: Loose;
-    emitter: Loose;
-    output: Loose;
-    handlers: Loose;
-    breaks: Loose;
-    continues: Loose;
+function targetFor(targets: JumpTarget[], label: string | null): JumpTarget | undefined {
+    if (label) {
+        return targets.find((target: JumpTarget) => target.label == label);
+    }
+    return last(targets);
+}
 
-    constructor (logger: Loose, rng: Loose) {
+function memberScopeName(node: AstNode): string | null {
+    if (node.type != "MemberExpression") {
+        return null;
+    }
+    const object = childNode(node, "object");
+    const property = childNode(node, "property");
+    const objectName = nodeName(object);
+    if (
+        object?.type == "Identifier" &&
+        objectName?.startsWith("$$scope") &&
+        property?.type == "Literal" &&
+        typeof nodeValue(property) == "number"
+    ) {
+        return objectName;
+    }
+    return null;
+}
+
+function expressionStatement(expression: AstNode): AstNode {
+    return {
+        type: "ExpressionStatement",
+        expression: expression
+    };
+}
+
+function stateAssignment(value: number): AstNode {
+    return expressionStatement({
+        type: "AssignmentExpression",
+        operator: "=",
+        left: { type: "Identifier", name: "state" },
+        right: { type: "Literal", value: value }
+    });
+}
+
+function switchCase(entry: number, consequent: AstNode[]): AstNode {
+    return {
+        type: "SwitchCase",
+        test: { type: "Literal", value: entry },
+        consequent: consequent
+    };
+}
+
+export default class Flattener {
+    logger: LoggerLike;
+    rng: RandomLike;
+    emitter: EventEmitter;
+    output: AstNode[];
+    handlers: AstNode[];
+    breaks: JumpTarget[];
+    continues: JumpTarget[];
+
+    constructor (logger: LoggerLike, rng: RandomLike) {
         this.logger = logger;
         this.rng = rng;
-        this.emitter = new events.EventEmitter();
+        this.emitter = new EventEmitter();
         this.output = [];
         this.handlers = [];
         this.breaks = [];
@@ -126,7 +294,7 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    addMethod (input: Loose, entry: Loose, exit: Loose) {
+    addMethod (input: AstNode, entry: number, exit: number): void {
         assert.ok(estest.isStatement(input));
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
@@ -140,7 +308,7 @@ export default class Flattener {
      * @param {number} exit Exit point
      * @returns {Statement} Switch construct
      */
-    getCases (entry: Loose, exit: Loose) {
+    getCases (entry: number, exit: number): AstNode {
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
@@ -208,16 +376,14 @@ export default class Flattener {
      * @param {Object} options Program options
      * @returns {Program} Switch construct program
      */
-    getProgram (entry: Loose, exit: Loose, options: Loose) {
+    getProgram (entry: number, exit: number, options: ProgramOptions = {}): AstNode {
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
 
-        options = options || {};
         const name = options.name || "main";
         const invoke = options.invoke !== false;
         
-        let body: Loose[];
-        body = [
+        const body: AstNode[] = [
             {
                 type: "FunctionDeclaration",
                 id: { type: "Identifier", name: name },
@@ -278,7 +444,7 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformStatement (node: Loose, entry: Loose, exit: Loose) {
+    transformStatement (node: AstNode, entry: number, exit: number): void {
         assert(estest.isStatement(node));
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
@@ -306,7 +472,7 @@ export default class Flattener {
                 break;
             }
             case "TryStatement": {
-                if (node.handler && !node.finalizer) {
+                if (childNode(node, "handler") && !childNode(node, "finalizer")) {
                     this.transformTryCatch(node, entry, exit);
                 } else {
                     throw new Error("Not normalized");
@@ -314,13 +480,11 @@ export default class Flattener {
                 break;
             }
             case "EmptyStatement": {
-                // Empty
                 break;
             }
             default: {
                 this.logger.warn("Unsupported type " + node.type);
-                // This might be not the most elegant solution (TODO?)
-                // This caused an infinite loop when SwitchStatement was not handled separately
+                // This caused an infinite loop when SwitchStatement was not handled separately.
                 this.transformBlock({ type: "BlockStatement", body: [ node ] }, entry, exit);
                 break;
             }
@@ -333,21 +497,19 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformBlock (node: Loose, entry: Loose, exit: Loose) {
+    transformBlock (node: AstNode, entry: number, exit: number): void {
         assert.ok(node.type == "Program" || node.type == "BlockStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
-        assert(node.type == "Program" || node.type == "BlockStatement");
-        
         node = mergeNestedBlocks(node);
-        let blocks;
-        blocks = splitBlocks(node.body);
+        const blocks = splitBlocks(bodyArray(node));
 
         for (let i = 0; i < blocks.length; ++i) {
             if (blocks[i].type == "LabeledStatement") {
-                blocks[i].body.label = blocks[i].label;
-                blocks[i] = blocks[i].body;
+                const body = requiredChild(blocks[i], "body");
+                setNodeField(body, "label", childNode(blocks[i], "label"));
+                blocks[i] = body;
             }
             
             if (!estest.isStatement(blocks[i])) {
@@ -370,62 +532,32 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformSequence (node: Loose, entry: Loose, exit: Loose) {
+    transformSequence (node: AstNode, entry: number, exit: number): void {
         assert.equal(node.type, "BlockStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
-        const stmts: Loose[] = [];
+        const stmts: AstNode[] = [];
         
-        const aborted = !node.body.every((stmt: Loose) => {
+        const aborted = !bodyArray(node).every((stmt: AstNode) => {
             assert(estest.isStatement(stmt), stmt.type + " is not a statement");
             
             switch (stmt.type) {
                 case "BreakStatement": {
-                    let break_;
-                    if (stmt.label) {
-                        break_ = _.find(this.breaks, (x: Loose) => x.label.name == stmt.label.name);
-                    } else {
-                        break_ = _.last(this.breaks);
-                    }
-                    assert(break_ && break_.id, "No break target");
+                    const breakTarget = targetFor(this.breaks, labelName(stmt));
+                    assert(breakTarget, "No break target");
                     
-                    stmts.push({
-                        type: "ExpressionStatement",
-                        expression: {
-                            type: "AssignmentExpression",
-                            operator: "=",
-                            left: { type: "Identifier", name: "state" },
-                            right: { type: "Literal", value: break_.id }
-                        }
-                    });
-                    stmts.push({
-                        type: "BreakStatement"
-                    });
+                    stmts.push(stateAssignment(breakTarget.id));
+                    stmts.push({ type: "BreakStatement" });
                     
                     return false;
                 }
                 case "ContinueStatement": {
-                    let continue_;
-                    if (stmt.label) {
-                        continue_ = _.find(this.continues, (x: Loose) => x.label.name == stmt.label.name);
-                    } else {
-                        continue_ = _.last(this.continues);
-                    }
-                    assert(continue_ && continue_.id, "No continue target");
+                    const continueTarget = targetFor(this.continues, labelName(stmt));
+                    assert(continueTarget, "No continue target");
                     
-                    stmts.push({
-                        type: "ExpressionStatement",
-                        expression: {
-                            type: "AssignmentExpression",
-                            operator: "=",
-                            left: { type: "Identifier", name: "state" },
-                            right: { type: "Literal", value: continue_.id }
-                        }
-                    });
-                    stmts.push({
-                        type: "BreakStatement"
-                    });
+                    stmts.push(stateAssignment(continueTarget.id));
+                    stmts.push({ type: "BreakStatement" });
                     
                     return false;
                 }
@@ -435,8 +567,6 @@ export default class Flattener {
                     return false;
                 }
                 case "EmptyStatement": {
-                    // Empty
-                    
                     return true;
                 }
                 default: {
@@ -448,25 +578,11 @@ export default class Flattener {
         });
         
         if (!aborted) {
-            stmts.push({
-                type: "ExpressionStatement",
-                expression: {
-                    type: "AssignmentExpression",
-                    operator: "=",
-                    left: { type: "Identifier", name: "state" },
-                    right: { type: "Literal", value: exit }
-                }
-            });
-            stmts.push({
-                type: "BreakStatement"
-            });
+            stmts.push(stateAssignment(exit));
+            stmts.push({ type: "BreakStatement" });
         }
         
-        this.output.push({
-            type: "SwitchCase",
-            test: { type: "Literal", value: entry },
-            consequent: stmts
-        });
+        this.output.push(switchCase(entry, stmts));
         this.emitter.emit("branch", entry);
     }
     
@@ -476,40 +592,37 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformIf (node: Loose, entry: Loose, exit: Loose) {
+    transformIf (node: AstNode, entry: number, exit: number): void {
         assert.equal(node.type, "IfStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
         const thenEntry = this.rng.get();
-        const elseEntry = node.alternate ? this.rng.get() : exit;
-        this.output.push({
-            type: "SwitchCase",
-            test: { type: "Literal", value: entry },
-            consequent: [
-                {
-                    type: "ExpressionStatement",
-                    expression: {
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: { type: "Identifier", name: "state" },
-                        right: {
-                            type: "ConditionalExpression",
-                            test: node.test,
-                            consequent:  { type: "Literal", value: thenEntry },
-                            alternate: { type: "Literal", value: elseEntry }
-                        }
+        const alternate = childNode(node, "alternate");
+        const elseEntry = alternate ? this.rng.get() : exit;
+        this.output.push(switchCase(entry, [
+            {
+                type: "ExpressionStatement",
+                expression: {
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: { type: "Identifier", name: "state" },
+                    right: {
+                        type: "ConditionalExpression",
+                        test: requiredChild(node, "test"),
+                        consequent:  { type: "Literal", value: thenEntry },
+                        alternate: { type: "Literal", value: elseEntry }
                     }
-                },
-                {
-                    type: "BreakStatement"
                 }
-            ]
-        });
+            },
+            {
+                type: "BreakStatement"
+            }
+        ]));
         this.emitter.emit("branch", entry);
-        this.transformStatement(node.consequent, thenEntry, exit);
-        if (node.alternate) {
-            this.transformStatement(node.alternate, elseEntry, exit);
+        this.transformStatement(requiredChild(node, "consequent"), thenEntry, exit);
+        if (alternate) {
+            this.transformStatement(alternate, elseEntry, exit);
         }
     }
     
@@ -519,46 +632,42 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformWhile (node: Loose, entry: Loose, exit: Loose) {
+    transformWhile (node: AstNode, entry: number, exit: number): void {
         assert.equal(node.type, "WhileStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
         const bodyEntry = this.rng.get();
-        this.output.push({
-            type: "SwitchCase",
-            test: { type: "Literal", value: entry },
-            consequent: [
-                {
-                    type: "ExpressionStatement",
-                    expression: {
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: { type: "Identifier", name: "state" },
-                        right: {
-                            type: "ConditionalExpression",
-                            test: node.test,
-                            consequent:  { type: "Literal", value: bodyEntry },
-                            alternate: { type: "Literal", value: exit }
-                        }
+        this.output.push(switchCase(entry, [
+            {
+                type: "ExpressionStatement",
+                expression: {
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: { type: "Identifier", name: "state" },
+                    right: {
+                        type: "ConditionalExpression",
+                        test: requiredChild(node, "test"),
+                        consequent:  { type: "Literal", value: bodyEntry },
+                        alternate: { type: "Literal", value: exit }
                     }
-                },
-                {
-                    type: "BreakStatement"
                 }
-            ]
-        });
+            },
+            {
+                type: "BreakStatement"
+            }
+        ]));
         this.emitter.emit("branch", entry);
         
         this.breaks.push({
-            label: node.label && node.label.name,
+            label: labelName(node),
             id: exit
         });
         this.continues.push({
-            label: node.label && node.label.name,
+            label: labelName(node),
             id: entry
         });
-        this.transformBlock(node.body, bodyEntry, entry);
+        this.transformBlock(requiredChild(node, "body"), bodyEntry, entry);
         this.breaks.pop();
         this.continues.pop();
     }
@@ -569,46 +678,42 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformDoWhile (node: Loose, entry: Loose, exit: Loose) {
+    transformDoWhile (node: AstNode, entry: number, exit: number): void {
         assert.equal(node.type, "DoWhileStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
         const testEntry = this.rng.get();
-        this.output.push({
-            type: "SwitchCase",
-            test: { type: "Literal", value: testEntry },
-            consequent: [
-                {
-                    type: "ExpressionStatement",
-                    expression: {
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: { type: "Identifier", name: "state" },
-                        right: {
-                            type: "ConditionalExpression",
-                            test: node.test,
-                            consequent:  { type: "Literal", value: entry },
-                            alternate: { type: "Literal", value: exit }
-                        }
+        this.output.push(switchCase(testEntry, [
+            {
+                type: "ExpressionStatement",
+                expression: {
+                    type: "AssignmentExpression",
+                    operator: "=",
+                    left: { type: "Identifier", name: "state" },
+                    right: {
+                        type: "ConditionalExpression",
+                        test: requiredChild(node, "test"),
+                        consequent:  { type: "Literal", value: entry },
+                        alternate: { type: "Literal", value: exit }
                     }
-                },
-                {
-                    type: "BreakStatement"
                 }
-            ]
-        });
+            },
+            {
+                type: "BreakStatement"
+            }
+        ]));
         this.emitter.emit("branch", testEntry);
         
         this.breaks.push({
-            label: node.label && node.label.name,
+            label: labelName(node),
             id: exit
         });
         this.continues.push({
-            label: node.label && node.label.name,
+            label: labelName(node),
             id: entry
         });
-        this.transformBlock(node.body, entry, testEntry);
+        this.transformBlock(requiredChild(node, "body"), entry, testEntry);
         this.breaks.pop();
         this.continues.pop();
     }
@@ -619,58 +724,49 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformSwitch (node: Loose, entry: Loose, exit: Loose) {
+    transformSwitch (node: AstNode, entry: number, exit: number): void {
         assert.equal(node.type, "SwitchStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
         
-        const comps: Loose[] = [];
+        const comps: AstNode[] = [];
+        const cases = switchCases(node);
         
         this.breaks.push({
             label: null,
             id: exit
         });
         let nextCaseEntry = this.rng.get();
-        node.cases.forEach((switchCase: Loose) => {
-            const isLast = switchCase == _.last(node.cases);
+        cases.forEach((caseNode: AstNode, index: number) => {
+            const isLast = index == cases.length - 1;
             
             const caseEntry = nextCaseEntry;
             nextCaseEntry = this.rng.get();
             
-            /**
-             * What happens if there are empty BlockStatements elsewhere? Does it hang?
-             */
-            
-            if (switchCase.consequent.length > 0) {
+            const consequent = nodeArray(nodeFields(caseNode).consequent);
+            if (consequent.length > 0) {
                 this.transformBlock({
                     type: "BlockStatement",
-                    body: switchCase.consequent
+                    body: consequent
                 }, caseEntry, isLast ? exit : nextCaseEntry);
             } else {
                 nextCaseEntry = caseEntry;
             }
             
-            if (switchCase.test) {
+            const test = childNode(caseNode, "test");
+            if (test) {
                 comps.push({
                     type: "IfStatement",
                     test: {
                         type: "BinaryExpression",
                         operator: "==",
-                        left: utils.cloneISwearIKnowWhatImDoing(node.discriminant),
-                        right: switchCase.test
+                        left: utils.cloneISwearIKnowWhatImDoing(requiredChild(node, "discriminant")),
+                        right: test
                     },
                     consequent: {
                         type: "BlockStatement",
                         body: [
-                            {
-                                type: "ExpressionStatement",
-                                expression: {
-                                    type: "AssignmentExpression",
-                                    operator: "=",
-                                    left: { type: "Identifier", name: "state" },
-                                    right: { type: "Literal", value: caseEntry }
-                                }
-                            },
+                            stateAssignment(caseEntry),
                             {
                                 type: "BreakStatement"
                             }
@@ -681,15 +777,7 @@ export default class Flattener {
                 comps.push({
                     type: "BlockStatement",
                     body: [
-                        {
-                            type: "ExpressionStatement",
-                            expression: {
-                                type: "AssignmentExpression",
-                                operator: "=",
-                                left: { type: "Identifier", name: "state" },
-                                right: { type: "Literal", value: caseEntry }
-                            }
-                        },
+                        stateAssignment(caseEntry),
                         {
                             type: "BreakStatement"
                         }
@@ -699,11 +787,7 @@ export default class Flattener {
         });
         this.breaks.pop();
             
-        this.output.push({
-            type: "SwitchCase",
-            test: { type: "Literal", value: entry },
-            consequent: comps
-        });
+        this.output.push(switchCase(entry, comps));
     }
     
     /**
@@ -712,69 +796,67 @@ export default class Flattener {
      * @param {number} entry Entry point
      * @param {number} exit Exit point
      */
-    transformTryCatch (node: Loose, entry: Loose, exit: Loose) {
+    transformTryCatch (node: AstNode, entry: number, exit: number): void {
         assert.equal(node.type, "TryStatement");
         assert.equal(typeof entry, "number");
         assert.equal(typeof exit, "number");
-        assert.ok(node.handler);
-        assert.ok(!node.finalizer);
+
+        const handler = requiredChild(node, "handler");
+        assert.ok(!childNode(node, "finalizer"));
         
         const catchEntry = this.rng.get();
-        
-        if (node.handler) {
-            var scopeDef = node.handler.body.body.splice(0, 2);
-            assert(
-                scopeDef[0].type == "VariableDeclaration" &&
-                scopeDef[0].declarations.length == 1 &&
-                scopeDef[0].declarations[0].id.name.indexOf("$$scope") == 0,
-                "First element of node.handler.body isn't a VariableDeclaration of a scope object");
-            assert(
-                scopeDef[1].type == "ExpressionStatement" &&
-                scopeDef[1].expression.type == "AssignmentExpression" &&
-                scopeDef[1].expression.left.type == "MemberExpression" &&
-                scopeDef[1].expression.left.object.name.indexOf("$$scope") == 0 &&
-                scopeDef[1].expression.right.name.indexOf("$$var") == 0,
-                "Second element of node.handler.body is not a e assignment");
-        }
-        const createHandler = (entry: Loose) => {
-            if (node.handler) {
-                pushUniqSwitchCase(this.handlers, {
-                    type: "SwitchCase",
-                    test: { type: "Literal", value: entry },
-                    consequent: [
-                        scopeDef[0],
-                        {
-                            type: "ExpressionStatement",
-                            expression: {
-                                type: "AssignmentExpression",
-                                operator: "=",
-                                left: node.handler.toildefender$exception,
-                                right: { type: "Identifier", name: "e" }
-                            }
-                        },
-                        {
-                            type: "ExpressionStatement",
-                            expression: {
-                                type: "AssignmentExpression",
-                                operator: "=",
-                                left: { type: "Identifier", name: "state" },
-                                right: { type: "Literal", value: catchEntry }
-                            }
-                        },
-                        {
-                            type: "BreakStatement"
+        const handlerBody = mutableBody(requiredChild(handler, "body"));
+        const scopeDef = handlerBody.splice(0, 2);
+        const scopeDeclaration = scopeDef[0];
+        const exceptionAssignment = scopeDef[1];
+        const declarator = nodeDeclarations(scopeDeclaration)[0];
+        const scopeName = nodeName(childNode(declarator, "id")) || "";
+        const assignmentExpression = childNode(exceptionAssignment, "expression");
+        const assignmentLeft = assignmentExpression ? childNode(assignmentExpression, "left") : null;
+        const assignmentRight = assignmentExpression ? childNode(assignmentExpression, "right") : null;
+        const exceptionReference = nodeFields(handler)["toildefender$exception"];
+
+        assert(
+            scopeDeclaration?.type == "VariableDeclaration" &&
+            nodeDeclarations(scopeDeclaration).length == 1 &&
+            scopeName.indexOf("$$scope") == 0,
+            "First element of node.handler.body isn't a VariableDeclaration of a scope object");
+        assert(
+            exceptionAssignment?.type == "ExpressionStatement" &&
+            assignmentExpression?.type == "AssignmentExpression" &&
+            assignmentLeft?.type == "MemberExpression" &&
+            (nodeName(childNode(assignmentLeft, "object")) || "").indexOf("$$scope") == 0 &&
+            (nodeName(assignmentRight) || "").indexOf("$$var") == 0,
+            "Second element of node.handler.body is not a e assignment");
+        assert(estest.isNode(exceptionReference));
+
+        const createHandler = (branchEntry: number): void => {
+            pushUniqSwitchCase(this.handlers, {
+                type: "SwitchCase",
+                test: { type: "Literal", value: branchEntry },
+                consequent: [
+                    scopeDeclaration,
+                    {
+                        type: "ExpressionStatement",
+                        expression: {
+                            type: "AssignmentExpression",
+                            operator: "=",
+                            left: exceptionReference,
+                            right: { type: "Identifier", name: "e" }
                         }
-                    ]
-                });
-            }
+                    },
+                    stateAssignment(catchEntry),
+                    {
+                        type: "BreakStatement"
+                    }
+                ]
+            });
         };
         this.emitter.on("branch", createHandler);
-        this.transformBlock(node.block, entry, exit);
+        this.transformBlock(requiredChild(node, "block"), entry, exit);
         this.emitter.removeListener("branch", createHandler);
         
-        if (node.handler) {
-            this.transformBlock(node.handler.body, catchEntry, exit);
-        }
+        this.transformBlock(requiredChild(handler, "body"), catchEntry, exit);
     }
     
     /**
@@ -782,47 +864,37 @@ export default class Flattener {
      * @params {Node} ast Root node
      * @returns {Node}
      */
-    unifyPrefixStatements (ast: Loose) {
-        const scopeObjects = new Map();
+    unifyPrefixStatements (ast: AstNode): AstNode {
+        const scopeObjects = new Map<string, ScopeObjectInfo>();
         let maximumScopeIndex = 0;
 
-        function scopeNameFromReference(node: Loose) {
-            if (
-                node &&
-                node.type == "MemberExpression" &&
-                node.object &&
-                node.object.type == "Identifier" &&
-                _.startsWith(node.object.name, "$$scope") &&
-                node.property &&
-                node.property.type == "Literal" &&
-                typeof node.property.value == "number"
-            ) {
-                return node.object.name;
-            }
-            return null;
-        }
-
-        function ensureScopeObject(name: Loose) {
-            if (!scopeObjects.has(name)) {
-                scopeObjects.set(name, {
+        function ensureScopeObject(name: string): ScopeObjectInfo {
+            let info = scopeObjects.get(name);
+            if (!info) {
+                info = {
                     max: -1,
                     offset: 0
-                });
+                };
+                scopeObjects.set(name, info);
             }
-            return scopeObjects.get(name);
+            return info;
         }
 
-        traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
-            if (node.toildefender$scopeObject) {
-                const declaration = node.declarations && node.declarations[0];
-                if (declaration && declaration.id && declaration.id.type == "Identifier") {
-                    ensureScopeObject(declaration.id.name);
-                }
-            } else if (node.toildefender$scopeObjectReference) {
-                const name = scopeNameFromReference(node);
+        traverser.traverse(ast, [], (node: AstNode) => {
+            if (nodeFlag(node, "toildefender$scopeObject")) {
+                const declaration = nodeDeclarations(node)[0];
+                const name = nodeName(childNode(declaration, "id"));
                 if (name) {
-                    const info = ensureScopeObject(name);
-                    info.max = Math.max(info.max, node.property.value);
+                    ensureScopeObject(name);
+                }
+            } else if (nodeFlag(node, "toildefender$scopeObjectReference")) {
+                const name = memberScopeName(node);
+                if (name) {
+                    const property = requiredChild(node, "property");
+                    const value = nodeValue(property);
+                    if (typeof value == "number") {
+                        ensureScopeObject(name).max = Math.max(ensureScopeObject(name).max, value);
+                    }
                 }
             }
             return node;
@@ -833,37 +905,50 @@ export default class Flattener {
         }
 
         let nextScopeOffset = 0;
-        scopeObjects.forEach((info: Loose) => {
+        scopeObjects.forEach((info: ScopeObjectInfo) => {
             info.offset = nextScopeOffset;
             nextScopeOffset += info.max + 1;
         });
         
-        ast = traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
-            if (node.toildefender$reassigningArguments && !node.toildefender$followsSlicingArguments) {
+        ast = traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
+            if (nodeFlag(node, "toildefender$reassigningArguments") && !nodeFlag(node, "toildefender$followsSlicingArguments")) {
                 node = { type: "EmptyStatement" };
-            } else if (node.toildefender$scopeObject) {
+            } else if (nodeFlag(node, "toildefender$scopeObject")) {
                 node = { type: "EmptyStatement" };
-            } else if (node.toildefender$scopeObjectReference) {
-                const name = scopeNameFromReference(node);
+            } else if (nodeFlag(node, "toildefender$scopeObjectReference")) {
+                const name = memberScopeName(node);
                 const info = name ? scopeObjects.get(name) : null;
-                if (info) {
-                    node.property.value += info.offset;
-                    maximumScopeIndex = Math.max(maximumScopeIndex, node.property.value);
+                const property = childNode(node, "property");
+                const value = nodeValue(property);
+                if (info && property && typeof value == "number") {
+                    const shifted = value + info.offset;
+                    setNodeValue(property, shifted);
+                    maximumScopeIndex = Math.max(maximumScopeIndex, shifted);
                 }
-                if (node.object && node.object.type == "Identifier") {
-                    node.object.name = "$$unifiedScope";
+                const object = childNode(node, "object");
+                if (object?.type == "Identifier") {
+                    setNodeName(object, "$$unifiedScope");
                 }
-            } else if (node.type == "Identifier" && _.startsWith(node.name, "$$scope")) {
-                const parent = stack[1] && stack[1].node;
-                if (parent && parent.toildefender$scopeObjectReference) {
+            } else if (node.type == "Identifier" && (nodeName(node) || "").startsWith("$$scope")) {
+                const parent = stack[1]?.node;
+                if (parent && nodeFlag(parent, "toildefender$scopeObjectReference")) {
                     return node;
                 }
-                node.name = "$$unifiedScope";
+                setNodeName(node, "$$unifiedScope");
             }
             return node;
         });
-        
-        ast.body[0].body.body.splice(0, 0,
+
+        const programBody = bodyArray(ast);
+        const first = programBody[0];
+        if (!first) {
+            return ast;
+        }
+        const firstBody = childNode(first, "body");
+        if (!firstBody) {
+            return ast;
+        }
+        mutableBody(firstBody).splice(0, 0,
             {
                 type: "ExpressionStatement",
                 expression: {
@@ -899,5 +984,4 @@ export default class Flattener {
         
         return ast;
     }
-    
-};
+}

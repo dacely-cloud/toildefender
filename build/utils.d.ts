@@ -1,4 +1,4 @@
-import type { Loose, ReferenceLike } from "./types.js";
+import type { ReferenceLike } from "./types.js";
 export declare function splice<T>(arr: T[], pos: number, del: number, elems: T[]): void;
 export declare function unshift<T>(arr: T[], arr2: T | T[]): void;
 export declare function push<T>(arr: T[], arr2: T | T[]): void;
@@ -20,7 +20,7 @@ export declare class UniqueRandomAlpha {
     constructor(len: number);
     get(): string;
 }
-export declare class HashMap<T = Loose> {
+export declare class HashMap<T = unknown> {
     private readonly store;
     get(key: string): T | undefined;
     set(key: string, value: T): T;

@@ -1,10 +1,11 @@
-import assert from "assert";
-import _ from "lodash";
-import escodegen from "escodegen";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
-import type { Loose } from "../types.js";
+
+function bodyStatements(node: AstNode): AstNode[] {
+    const body = (node as { body?: unknown }).body;
+    return Array.isArray(body) ? (body as AstNode[]) : [];
+}
 
 export default class Health {
     logger: LoggerLike;
@@ -29,17 +30,17 @@ export default class Health {
      * @returns {Node} Root node
      */
     check (ast: AstNode): AstNode {
-        const visited: Loose[] = [];
+        const visited = new Set<AstNode>();
         
         traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
-            if (_.includes(visited, node)) {
+            if (visited.has(node)) {
                 this.throwError("Node has multiple parents: " + JSON.stringify(node));
             } else {
-                visited.push(node);
+                visited.add(node);
             }
             
             if (node.type == "BlockStatement") {
-                node.body.forEach((stmt: AstNode) => {
+                bodyStatements(node).forEach((stmt: AstNode) => {
                     if (!estest.isStatement(stmt)) {
                         this.throwError(JSON.stringify(stack[1], null, 2));
                     }

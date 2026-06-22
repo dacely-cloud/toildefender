@@ -1,13 +1,18 @@
-import type { Loose } from "../types.js";
-export default class Methods {
-    logger: Loose;
-    constructor(logger: Loose);
-    addCustomBind(ast: Loose): void;
-    methodRefersToArguments(method: Loose, scopeManager: Loose): any;
-    removeFirstArguments(method: Loose, num: Loose): void;
-    listMethods(ast: Loose): any[];
-    extractMethods(ast: Loose): any[];
-    replaceArgumentReferences(method: Loose, useReassignedVariable: Loose): any;
-    replaceFunctionCalls(ast: Loose, methodEntryExitPoints: Loose): void;
-    bumpArgumentsIndices(method: Loose, inc: Loose): void;
+import type { AstNode, LoggerLike } from "../types.js";
+interface MethodEntryPoint {
+    dispatcher?: string;
+    entry: number;
 }
+export default class Methods {
+    logger: LoggerLike;
+    constructor(logger: LoggerLike);
+    addCustomBind(ast: AstNode): void;
+    methodRefersToArguments(method: AstNode, scopeManager: unknown): boolean;
+    removeFirstArguments(method: AstNode, num: number): void;
+    listMethods(ast: AstNode): string[];
+    extractMethods(ast: AstNode): AstNode[];
+    replaceArgumentReferences(method: AstNode, useReassignedVariable: boolean): AstNode;
+    replaceFunctionCalls(ast: AstNode, methodEntryExitPoints: Record<string, MethodEntryPoint>): void;
+    bumpArgumentsIndices(method: AstNode, inc: number): void;
+}
+export {};

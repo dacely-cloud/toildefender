@@ -3,7 +3,7 @@ import _ from "lodash";
 import escodegen from "escodegen";
 import * as esprima from "esprima";
 import traverser from "./traverser.js";
-import type { Loose, ReferenceLike } from "./types.js";
+import type { ReferenceLike } from "./types.js";
 
 export function splice<T>(arr: T[], pos: number, del: number, elems: T[]): void {
     arr.splice(pos, del, ...elems);
@@ -100,7 +100,7 @@ export class UniqueRandomAlpha {
     }
 }
 
-export class HashMap<T = Loose> {
+export class HashMap<T = unknown> {
     private readonly store: Record<string, T> = {};
 
     get(key: string): T | undefined {

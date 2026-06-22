@@ -1,9 +1,116 @@
 import assert from "assert";
-import _ from "lodash";
 import utils from "../utils.js";
 import traverser from "../traverser.js";
 import estest from "../estest.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
+
+interface RandomAlphaLike {
+    get(): string;
+}
+
+interface SwitchCaseDetails {
+    breaks: boolean;
+    statements: AstNode[];
+    test: AstNode | null;
+}
+
+type PrivateStores = Record<string, string>;
+
+function nodeFields(node: AstNode): Record<string, unknown> {
+    return node as unknown as Record<string, unknown>;
+}
+
+function nodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function rawArray(value: unknown): unknown[] {
+    return Array.isArray(value) ? value : [];
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = nodeFields(node)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function requiredChild(node: AstNode, key: string): AstNode {
+    const child = childNode(node, key);
+    assert.ok(child, `Missing ${node.type}.${key}`);
+    return child;
+}
+
+function setNodeField(node: AstNode, key: string, value: unknown): void {
+    nodeFields(node)[key] = value;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function nodeValue(node: AstNode | null): unknown {
+    return (node as { value?: unknown } | null)?.value;
+}
+
+function nodeKind(node: AstNode): string {
+    const kind = (node as { kind?: unknown }).kind;
+    return typeof kind == "string" ? kind : "var";
+}
+
+function nodeOperator(node: AstNode): string | null {
+    const operator = (node as { operator?: unknown }).operator;
+    return typeof operator == "string" ? operator : null;
+}
+
+function nodeComputed(node: AstNode): boolean {
+    return (node as { computed?: unknown }).computed === true;
+}
+
+function nodeFlag(node: AstNode, key: "async" | "optional" | "static" | "toildefender$noNumericVm"): boolean {
+    return (node as Record<string, unknown>)[key] === true;
+}
+
+function bodyArray(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).body);
+}
+
+function mutableBody(node: AstNode): AstNode[] {
+    const body = nodeFields(node).body;
+    if (Array.isArray(body)) {
+        return body as AstNode[];
+    }
+    const nextBody: AstNode[] = [];
+    nodeFields(node).body = nextBody;
+    return nextBody;
+}
+
+function nodeArguments(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).arguments);
+}
+
+function nodeParams(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).params);
+}
+
+function nodeDeclarations(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).declarations);
+}
+
+function nodeProperties(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).properties);
+}
+
+function nodeElements(node: AstNode): Array<AstNode | null> {
+    return rawArray(nodeFields(node).elements).map((element: unknown) => estest.isNode(element) ? element : null);
+}
+
+function undefinedExpression(): AstNode {
+    return { type: "Identifier", name: "undefined" };
+}
+
+function fallbackExpression(node: AstNode | null, fallback: AstNode): AstNode {
+    return node || fallback;
+}
 
 /**
  * Chain an array of expressions with an operator.
@@ -11,7 +118,7 @@ import type { Loose } from "../types.js";
  * @param {BinaryOperator} operator
  * @returns {Expression}
  */
-function chain (expressions: Loose, operator: Loose) {
+function chain (expressions: AstNode[], operator: string): AstNode {
     assert.ok(Array.isArray(expressions));
     assert.equal(typeof operator, "string");
     
@@ -26,7 +133,7 @@ function chain (expressions: Loose, operator: Loose) {
                 type: "BinaryExpression",
                 operator: operator,
                 left: result,
-                right: expressions[1]
+                right: expressions[i]
             };
         }
         return result;
@@ -38,27 +145,28 @@ function chain (expressions: Loose, operator: Loose) {
  * @param {Node} node
  * @returns {Node[]}
  */
-function blockToArray (node: Loose) {
+function blockToArray (node: AstNode): AstNode[] {
     assert.ok(estest.isNode(node));
-    
-    if (Array.isArray(node.body)) {
-        return node.body;
-    } else if (node.body) {
-        return [ node.body ];
+
+    const body = nodeFields(node).body;
+    if (Array.isArray(body)) {
+        return body as AstNode[];
+    } else if (estest.isNode(body)) {
+        return [ body ];
     } else {
         return [ node ];
     }
 }
 
-function hasSpreadElement(nodes: Loose) {
-    return nodes.some((node: Loose) => node && node.type == "SpreadElement");
+function hasSpreadElement(nodes: AstNode[]): boolean {
+    return nodes.some((node: AstNode) => node.type == "SpreadElement");
 }
 
-function isSimpleThisReceiver(node: Loose) {
+function isSimpleThisReceiver(node: AstNode): boolean {
     return node.type == "Identifier" || node.type == "ThisExpression";
 }
 
-function buildArrayConcat(parts: Loose) {
+function buildArrayConcat(parts: AstNode[]): AstNode {
     if (parts.length == 0) {
         return { type: "ArrayExpression", elements: [] };
     }
@@ -77,21 +185,21 @@ function buildArrayConcat(parts: Loose) {
     };
 }
 
-function spreadArgumentsToArray(args: Loose) {
-    const parts: Loose[] = [];
-    let pending: Loose[] = [];
+function spreadArgumentsToArray(args: AstNode[]): AstNode {
+    const parts: AstNode[] = [];
+    let pending: AstNode[] = [];
 
-    function flushPending() {
+    function flushPending(): void {
         if (pending.length > 0) {
             parts.push({ type: "ArrayExpression", elements: pending });
             pending = [];
         }
     }
 
-    args.forEach((arg: Loose) => {
+    args.forEach((arg: AstNode) => {
         if (arg.type == "SpreadElement") {
             flushPending();
-            parts.push(arg.argument);
+            parts.push(requiredChild(arg, "argument"));
         } else {
             pending.push(arg);
         }
@@ -101,7 +209,7 @@ function spreadArgumentsToArray(args: Loose) {
     return buildArrayConcat(parts);
 }
 
-function isLoopOrSwitch(node: Loose) {
+function isLoopOrSwitch(node: AstNode): boolean {
     return node.type == "WhileStatement"
         || node.type == "DoWhileStatement"
         || node.type == "ForStatement"
@@ -110,20 +218,20 @@ function isLoopOrSwitch(node: Loose) {
         || node.type == "SwitchStatement";
 }
 
-function exitsCurrentTry(node: Loose, stack: Loose) {
+function exitsCurrentTry(node: AstNode, stack: AstStackFrame[]): boolean {
     if (node.type == "ReturnStatement") {
         return true;
     }
 
     if (node.type == "BreakStatement" || node.type == "ContinueStatement") {
-        return !stack.some((frame: Loose) => isLoopOrSwitch(frame.node));
+        return !stack.some((frame: AstStackFrame) => isLoopOrSwitch(frame.node));
     }
 
     return false;
 }
 
-function withFinalizerBefore(node: Loose, finalizer: Loose) {
-    const body: Loose[] = [];
+function withFinalizerBefore(node: AstNode, finalizer: AstNode): AstNode {
+    const body: AstNode[] = [];
 
     if (node.type == "ReturnStatement") {
         body.push({
@@ -133,7 +241,7 @@ function withFinalizerBefore(node: Loose, finalizer: Loose) {
                 {
                     type: "VariableDeclarator",
                     id: { type: "Identifier", name: "toildefender$return" },
-                    init: node.argument
+                    init: childNode(node, "argument")
                 }
             ]
         });
@@ -153,56 +261,58 @@ function withFinalizerBefore(node: Loose, finalizer: Loose) {
     };
 }
 
-function methodDefinitionName(method: Loose) {
-    if (!method || !method.key) {
+function methodDefinitionName(method: AstNode | null): string {
+    const key = method ? childNode(method, "key") : null;
+    if (!key) {
         return "";
     }
-    if (method.key.type == "Identifier") {
-        return method.key.name;
+    if (key.type == "Identifier" || key.type == "PrivateIdentifier") {
+        return nodeName(key) || "";
     }
-    if (method.key.type == "Literal") {
-        return String(method.key.value);
+    if (key.type == "Literal") {
+        return String(nodeValue(key));
     }
     return "";
 }
 
-function isConstructorMethod(method: Loose) {
-    return method.type == "MethodDefinition" && method.kind == "constructor" && methodDefinitionName(method) == "constructor";
+function isConstructorMethod(method: AstNode): boolean {
+    return method.type == "MethodDefinition" && nodeKind(method) == "constructor" && methodDefinitionName(method) == "constructor";
 }
 
-function privateStoreName(className: Loose, privateName: Loose) {
+function privateStoreName(className: string, privateName: string): string {
     return `$$private$${className}$${privateName}`;
 }
 
-function classFieldKey(field: Loose) {
-    if (field.key.type == "Identifier") {
+function classFieldKey(field: AstNode): AstNode {
+    const key = requiredChild(field, "key");
+    if (key.type == "Identifier") {
         return {
             type: "Identifier",
-            name: field.key.name
+            name: nodeName(key) || ""
         };
     }
-    if (field.key.type == "PrivateIdentifier") {
+    if (key.type == "PrivateIdentifier") {
         return {
             type: "Literal",
-            value: field.key.name
+            value: nodeName(key) || ""
         };
     }
-    return field.key;
+    return key;
 }
 
-function assignmentStatement(left: Loose, right: Loose) {
+function assignmentStatement(left: AstNode, right: AstNode | null): AstNode {
     return {
         type: "ExpressionStatement",
         expression: {
             type: "AssignmentExpression",
             operator: "=",
             left: left,
-            right: right || { type: "Identifier", name: "undefined" }
+            right: fallbackExpression(right, undefinedExpression())
         }
     };
 }
 
-function weakMapSetStatement(storeName: Loose, object: Loose, value: Loose) {
+function weakMapSetStatement(storeName: string, object: AstNode, value: AstNode | null): AstNode {
     return {
         type: "ExpressionStatement",
         expression: {
@@ -215,13 +325,13 @@ function weakMapSetStatement(storeName: Loose, object: Loose, value: Loose) {
             },
             arguments: [
                 object,
-                value || { type: "Identifier", name: "undefined" }
+                fallbackExpression(value, undefinedExpression())
             ]
         }
     };
 }
 
-function weakMapGetExpression(storeName: Loose, object: Loose) {
+function weakMapGetExpression(storeName: string, object: AstNode): AstNode {
     return {
         type: "CallExpression",
         callee: {
@@ -234,11 +344,7 @@ function weakMapGetExpression(storeName: Loose, object: Loose) {
     };
 }
 
-function undefinedExpression() {
-    return { type: "Identifier", name: "undefined" };
-}
-
-function nullishTest(expression: Loose) {
+function nullishTest(expression: AstNode): AstNode {
     return {
         type: "BinaryExpression",
         operator: "==",
@@ -247,7 +353,7 @@ function nullishTest(expression: Loose) {
     };
 }
 
-function notNullishTest(expression: Loose) {
+function notNullishTest(expression: AstNode): AstNode {
     return {
         type: "BinaryExpression",
         operator: "!=",
@@ -256,41 +362,44 @@ function notNullishTest(expression: Loose) {
     };
 }
 
-function propertyKeyValue(property: Loose) {
-    if (property.key.type == "Identifier") {
-        return property.key.name;
+function propertyKeyValue(property: AstNode): string | number | null {
+    const key = requiredChild(property, "key");
+    if (key.type == "Identifier") {
+        return nodeName(key) || "";
     }
-    if (property.key.type == "Literal") {
-        return property.key.value;
+    if (key.type == "Literal") {
+        const value = nodeValue(key);
+        return typeof value == "string" || typeof value == "number" ? value : String(value);
     }
     return null;
 }
 
-function propertyMemberExpression(object: Loose, property: Loose) {
+function propertyMemberExpression(object: AstNode, property: AstNode): AstNode {
+    const key = requiredChild(property, "key");
     return {
         type: "MemberExpression",
         object: object,
-        property: property.key.type == "Identifier"
-            ? { type: "Identifier", name: property.key.name }
-            : utils.cloneISwearIKnowWhatImDoing(property.key),
-        computed: property.computed === true || property.key.type == "Literal"
+        property: key.type == "Identifier"
+            ? { type: "Identifier", name: nodeName(key) || "" }
+            : utils.cloneISwearIKnowWhatImDoing(key),
+        computed: nodeComputed(property) || key.type == "Literal"
     };
 }
 
-function hasObjectRest(pattern: Loose) {
-    return pattern.type == "ObjectPattern" && pattern.properties.some((prop: Loose) => prop.type == "RestElement");
+function hasObjectRest(pattern: AstNode): boolean {
+    return pattern.type == "ObjectPattern" && nodeProperties(pattern).some((prop: AstNode) => prop.type == "RestElement");
 }
 
-function hasObjectPattern(pattern: Loose) {
-    return pattern.type == "ObjectPattern";
+function hasObjectPattern(pattern: AstNode | null): boolean {
+    return pattern?.type == "ObjectPattern";
 }
 
-function hasArrayPattern(pattern: Loose) {
-    return pattern.type == "ArrayPattern";
+function hasArrayPattern(pattern: AstNode | null): boolean {
+    return pattern?.type == "ArrayPattern";
 }
 
-function canLowerArrayPattern(pattern: Loose) {
-    return pattern.type == "ArrayPattern" && pattern.elements.every((element: Loose) => {
+function canLowerArrayPattern(pattern: AstNode): boolean {
+    return pattern.type == "ArrayPattern" && nodeElements(pattern).every((element: AstNode | null) => {
         if (element == null) {
             return true;
         }
@@ -298,32 +407,33 @@ function canLowerArrayPattern(pattern: Loose) {
             return true;
         }
         if (element.type == "RestElement") {
-            return element.argument.type == "Identifier";
+            return requiredChild(element, "argument").type == "Identifier";
         }
-        return element.type == "AssignmentPattern" && element.left.type == "Identifier";
+        return element.type == "AssignmentPattern" && requiredChild(element, "left").type == "Identifier";
     });
 }
 
-function canLowerObjectRest(pattern: Loose) {
-    return pattern.type == "ObjectPattern" && pattern.properties.every((prop: Loose) => {
+function canLowerObjectRest(pattern: AstNode): boolean {
+    return pattern.type == "ObjectPattern" && nodeProperties(pattern).every((prop: AstNode) => {
         if (prop.type == "RestElement") {
-            return prop.argument.type == "Identifier";
+            return requiredChild(prop, "argument").type == "Identifier";
         }
-        if (prop.type != "Property" || prop.computed === true || propertyKeyValue(prop) == null) {
+        const value = childNode(prop, "value");
+        if (prop.type != "Property" || nodeComputed(prop) || propertyKeyValue(prop) == null || !value) {
             return false;
         }
-        if (prop.value.type == "Identifier") {
+        if (value.type == "Identifier") {
             return true;
         }
-        return prop.value.type == "AssignmentPattern" && prop.value.left.type == "Identifier";
+        return value.type == "AssignmentPattern" && requiredChild(value, "left").type == "Identifier";
     });
 }
 
-function hasObjectSpread(node: Loose) {
-    return node.properties.some((prop: Loose) => prop.type == "SpreadElement");
+function hasObjectSpread(node: AstNode): boolean {
+    return nodeProperties(node).some((prop: AstNode) => prop.type == "SpreadElement");
 }
 
-function objectAssignCall(parts: Loose) {
+function objectAssignCall(parts: AstNode[]): AstNode {
     return {
         type: "CallExpression",
         callee: {
@@ -336,7 +446,7 @@ function objectAssignCall(parts: Loose) {
     };
 }
 
-function objectWithoutKeysCall(source: Loose, keys: Loose) {
+function objectWithoutKeysCall(source: AstNode, keys: string[]): AstNode {
     return {
         type: "CallExpression",
         callee: { type: "Identifier", name: "toildefender$objectWithoutKeys" },
@@ -344,13 +454,13 @@ function objectWithoutKeysCall(source: Loose, keys: Loose) {
             source,
             {
                 type: "ArrayExpression",
-                elements: keys.map((key: Loose) => ({ type: "Literal", value: key }))
+                elements: keys.map((key: string) => ({ type: "Literal", value: key }))
             }
         ]
     };
 }
 
-function arrayElementExpression(sourceName: Loose, index: Loose) {
+function arrayElementExpression(sourceName: string, index: number): AstNode {
     return {
         type: "MemberExpression",
         object: { type: "Identifier", name: sourceName },
@@ -359,7 +469,7 @@ function arrayElementExpression(sourceName: Loose, index: Loose) {
     };
 }
 
-function arrayRestExpression(sourceName: Loose, index: Loose) {
+function arrayRestExpression(sourceName: string, index: number): AstNode {
     return {
         type: "CallExpression",
         callee: {
@@ -374,7 +484,7 @@ function arrayRestExpression(sourceName: Loose, index: Loose) {
     };
 }
 
-function arrayPatternElementDeclaration(kind: Loose, sourceName: Loose, element: Loose, index: Loose) {
+function arrayPatternElementDeclaration(kind: string, sourceName: string, element: AstNode | null, index: number): AstNode | null {
     if (element == null) {
         return null;
     }
@@ -386,7 +496,7 @@ function arrayPatternElementDeclaration(kind: Loose, sourceName: Loose, element:
             declarations: [
                 {
                     type: "VariableDeclarator",
-                    id: element.argument,
+                    id: requiredChild(element, "argument"),
                     init: arrayRestExpression(sourceName, index)
                 }
             ]
@@ -394,19 +504,18 @@ function arrayPatternElementDeclaration(kind: Loose, sourceName: Loose, element:
     }
 
     let id = element;
-    let init;
-    init = arrayElementExpression(sourceName, index);
+    let init = arrayElementExpression(sourceName, index);
     if (element.type == "AssignmentPattern") {
-        id = element.left;
+        id = requiredChild(element, "left");
         init = {
             type: "ConditionalExpression",
             test: {
                 type: "BinaryExpression",
                 operator: "===",
                 left: arrayElementExpression(sourceName, index),
-                right: { type: "Identifier", name: "undefined" }
+                right: undefinedExpression()
             },
-            consequent: element.right,
+            consequent: requiredChild(element, "right"),
             alternate: arrayElementExpression(sourceName, index)
         };
     }
@@ -424,10 +533,9 @@ function arrayPatternElementDeclaration(kind: Loose, sourceName: Loose, element:
     };
 }
 
-function arrayPatternStatements(kind: Loose, pattern: Loose, init: Loose, rngAlpha: Loose) {
+function arrayPatternStatements(kind: string, pattern: AstNode, init: AstNode | null, rngAlpha: RandomAlphaLike): AstNode[] {
     const sourceName = `$$destructure$arr$${rngAlpha.get()}`;
-    let statements;
-    statements = [
+    const statements: AstNode[] = [
         {
             type: "VariableDeclaration",
             kind: "var",
@@ -435,13 +543,13 @@ function arrayPatternStatements(kind: Loose, pattern: Loose, init: Loose, rngAlp
                 {
                     type: "VariableDeclarator",
                     id: { type: "Identifier", name: sourceName },
-                    init: init || { type: "ArrayExpression", elements: [] }
+                    init: fallbackExpression(init, { type: "ArrayExpression", elements: [] })
                 }
             ]
         }
     ];
 
-    pattern.elements.forEach((element: Loose, index: Loose) => {
+    nodeElements(pattern).forEach((element: AstNode | null, index: number) => {
         const lowered = arrayPatternElementDeclaration(kind, sourceName, element, index);
         if (lowered) {
             statements.push(lowered);
@@ -451,27 +559,27 @@ function arrayPatternStatements(kind: Loose, pattern: Loose, init: Loose, rngAlp
     return statements;
 }
 
-function arrayPatternAssignmentStatement(sourceName: Loose, element: Loose, index: Loose) {
+function arrayPatternAssignmentStatement(sourceName: string, element: AstNode | null, index: number): AstNode | null {
     if (element == null) {
         return null;
     }
 
-    let left;
-    let right;
+    let left: AstNode;
+    let right: AstNode;
     if (element.type == "RestElement") {
-        left = element.argument;
+        left = requiredChild(element, "argument");
         right = arrayRestExpression(sourceName, index);
     } else if (element.type == "AssignmentPattern") {
-        left = element.left;
+        left = requiredChild(element, "left");
         right = {
             type: "ConditionalExpression",
             test: {
                 type: "BinaryExpression",
                 operator: "===",
                 left: arrayElementExpression(sourceName, index),
-                right: { type: "Identifier", name: "undefined" }
+                right: undefinedExpression()
             },
-            consequent: element.right,
+            consequent: requiredChild(element, "right"),
             alternate: arrayElementExpression(sourceName, index)
         };
     } else {
@@ -482,10 +590,9 @@ function arrayPatternAssignmentStatement(sourceName: Loose, element: Loose, inde
     return assignmentStatement(left, right);
 }
 
-function arrayPatternAssignmentStatements(pattern: Loose, init: Loose, rngAlpha: Loose) {
+function arrayPatternAssignmentStatements(pattern: AstNode, init: AstNode | null, rngAlpha: RandomAlphaLike): AstNode[] {
     const sourceName = `$$destructure$arr$${rngAlpha.get()}`;
-    let statements: Loose[];
-    statements = [
+    const statements: AstNode[] = [
         {
             type: "VariableDeclaration",
             kind: "var",
@@ -493,13 +600,13 @@ function arrayPatternAssignmentStatements(pattern: Loose, init: Loose, rngAlpha:
                 {
                     type: "VariableDeclarator",
                     id: { type: "Identifier", name: sourceName },
-                    init: init || { type: "ArrayExpression", elements: [] }
+                    init: fallbackExpression(init, { type: "ArrayExpression", elements: [] })
                 }
             ]
         }
     ];
 
-    pattern.elements.forEach((element: Loose, index: Loose) => {
+    nodeElements(pattern).forEach((element: AstNode | null, index: number) => {
         const lowered = arrayPatternAssignmentStatement(sourceName, element, index);
         if (lowered) {
             statements.push(lowered);
@@ -509,17 +616,17 @@ function arrayPatternAssignmentStatements(pattern: Loose, init: Loose, rngAlpha:
     return statements;
 }
 
-function objectPatternPropertyDeclaration(kind: Loose, sourceName: Loose, prop: Loose) {
+function objectPatternPropertyDeclaration(kind: string, sourceName: string, prop: AstNode): AstNode {
     const member = propertyMemberExpression(
         { type: "Identifier", name: sourceName },
         prop
     );
-    let id = prop.value;
-    let init;
-    init = member;
+    const value = requiredChild(prop, "value");
+    let id = value;
+    let init = member;
 
-    if (prop.value.type == "AssignmentPattern") {
-        id = prop.value.left;
+    if (value.type == "AssignmentPattern") {
+        id = requiredChild(value, "left");
         init = {
             type: "ConditionalExpression",
             test: {
@@ -528,7 +635,7 @@ function objectPatternPropertyDeclaration(kind: Loose, sourceName: Loose, prop: 
                 left: utils.cloneISwearIKnowWhatImDoing(member),
                 right: undefinedExpression()
             },
-            consequent: prop.value.right,
+            consequent: requiredChild(value, "right"),
             alternate: member
         };
     }
@@ -546,9 +653,9 @@ function objectPatternPropertyDeclaration(kind: Loose, sourceName: Loose, prop: 
     };
 }
 
-function containsThisExpression(node: Loose) {
+function containsThisExpression(node: AstNode): boolean {
     let found = false;
-    traverser.traverseEx(node, [], function (this: { abort(): void }, child: Loose) {
+    traverser.traverseEx(node, [], function (this: { abort(): void }, child: AstNode) {
         if (child.type == "ThisExpression") {
             found = true;
             this.abort();
@@ -558,14 +665,15 @@ function containsThisExpression(node: Loose) {
     return found;
 }
 
-function defaultParameterStatement(param: Loose) {
+function defaultParameterStatement(param: AstNode): AstNode {
+    const left = requiredChild(param, "left");
     return {
         type: "IfStatement",
         test: {
             type: "BinaryExpression",
             operator: "===",
-            left: utils.cloneISwearIKnowWhatImDoing(param.left),
-            right: { type: "Identifier", name: "undefined" }
+            left: utils.cloneISwearIKnowWhatImDoing(left),
+            right: undefinedExpression()
         },
         consequent: {
             type: "BlockStatement",
@@ -575,8 +683,8 @@ function defaultParameterStatement(param: Loose) {
                     expression: {
                         type: "AssignmentExpression",
                         operator: "=",
-                        left: utils.cloneISwearIKnowWhatImDoing(param.left),
-                        right: param.right
+                        left: utils.cloneISwearIKnowWhatImDoing(left),
+                        right: requiredChild(param, "right")
                     }
                 }
             ]
@@ -584,14 +692,14 @@ function defaultParameterStatement(param: Loose) {
     };
 }
 
-function restParameterStatement(param: Loose, index: Loose) {
+function restParameterStatement(param: AstNode, index: number): AstNode {
     return {
         type: "VariableDeclaration",
         kind: "var",
         declarations: [
             {
                 type: "VariableDeclarator",
-                id: param.argument,
+                id: requiredChild(param, "argument"),
                 init: {
                     type: "CallExpression",
                     callee: {
@@ -620,58 +728,60 @@ function restParameterStatement(param: Loose, index: Loose) {
     };
 }
 
-function lowerFunctionParameters(node: Loose) {
-    if (!estest.isFunction(node) || !Array.isArray(node.params)) {
+function lowerFunctionParameters(node: AstNode): AstNode {
+    if (!estest.isFunction(node)) {
         return node;
     }
 
-    const prefix: Loose[] = [];
-    const params: Loose[] = [];
-    node.params.forEach((param: Loose, index: Loose) => {
-        if (param.type == "AssignmentPattern" && param.left.type == "Identifier") {
+    const prefix: AstNode[] = [];
+    const params: AstNode[] = [];
+    nodeParams(node).forEach((param: AstNode, index: number) => {
+        if (param.type == "AssignmentPattern" && requiredChild(param, "left").type == "Identifier") {
             prefix.push(defaultParameterStatement(param));
-            params.push(param.left);
+            params.push(requiredChild(param, "left"));
             return;
         }
-        if (param.type == "RestElement" && param.argument.type == "Identifier") {
+        if (param.type == "RestElement" && requiredChild(param, "argument").type == "Identifier") {
             prefix.push(restParameterStatement(param, index));
             return;
         }
         params.push(param);
     });
-    node.params = params;
+    setNodeField(node, "params", params);
 
     if (prefix.length == 0) {
         return node;
     }
 
-    if (node.body.type != "BlockStatement") {
-        node.body = {
+    const body = requiredChild(node, "body");
+    if (body.type != "BlockStatement") {
+        setNodeField(node, "body", {
             type: "BlockStatement",
             body: [
                 {
                     type: "ReturnStatement",
-                    argument: node.body
+                    argument: body
                 }
             ]
-        };
+        });
     }
-    node.body.body = prefix.concat(node.body.body);
+    const nextBody = requiredChild(node, "body");
+    setNodeField(nextBody, "body", prefix.concat(bodyArray(nextBody)));
     return node;
 }
 
-function blockNeedsLexicalScope(node: Loose) {
+function blockNeedsLexicalScope(node: AstNode): boolean {
     if (node.type != "BlockStatement") {
         return false;
     }
 
     let needsScope = false;
-    traverser.traverseEx(node, [], function (this: { abort(): void }, child: Loose) {
+    traverser.traverseEx(node, [], function (this: { abort(): void }, child: AstNode) {
         if (child != node && estest.isFunction(child)) {
             return child;
         }
         if (
-            (child.type == "VariableDeclaration" && child.kind != "var")
+            (child.type == "VariableDeclaration" && nodeKind(child) != "var")
             || child.type == "ClassDeclaration"
         ) {
             needsScope = true;
@@ -683,10 +793,10 @@ function blockNeedsLexicalScope(node: Loose) {
 }
 
 export default class Normalizer {
-    logger: Loose;
-    rngAlpha: Loose;
+    logger: LoggerLike;
+    rngAlpha: RandomAlphaLike;
 
-    constructor (logger: Loose) {
+    constructor (logger: LoggerLike) {
         this.logger = logger;
         this.rngAlpha = new utils.UniqueRandomAlpha(3);
     }
@@ -696,26 +806,20 @@ export default class Normalizer {
      * @param {Node} ast Root node
      * @returns {Node}
      */
-    simplify (ast: Loose) {
+    simplify (ast: AstNode): AstNode {
         assert.ok(estest.isNode(ast));
         
-        return traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        return traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             switch (node.type) {
                 case "Program":
                 case "BlockStatement":
                     return this.simplifyBlockStatement(node);
-                /*case "WhileStatement":
-                    return this.simplifyWhileStatement(node);*/
-                /*case "DoWhileStatement":
-                    return this.simplifyDoWhileStatement(node);*/
                 case "ForStatement":
                     return this.simplifyForStatement(node);
                 case "ForInStatement":
                     return this.simplifyForStatement(this.simplifyForInStatement(node));
                 case "ForOfStatement":
                     return this.simplifyForOfStatement(node);
-                /*case "SwitchStatement":
-                    return this.simplifySwitchStatement(node);*/
                 case "TryStatement":
                     return this.simplifyTryStatement(node);
                 case "CallExpression":
@@ -749,25 +853,26 @@ export default class Normalizer {
      * @param {BlockStatement} node
      * @return {Node}
      */
-    simplifyBlockStatement (node: Loose) {
+    simplifyBlockStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
     
-        function getBlockBodys(node: Loose, isRoot: Loose) {
-            if (node.type == "Program" || node.type == "BlockStatement") {
-                if (!isRoot && blockNeedsLexicalScope(node)) {
-                    return [ node ];
+        function getBlockBodies(child: AstNode, isRoot: boolean): AstNode[] {
+            if (child.type == "Program" || child.type == "BlockStatement") {
+                if (!isRoot && blockNeedsLexicalScope(child)) {
+                    return [ child ];
                 }
-                const stmts: Loose[] = [];
-                node.body.forEach((stmt: Loose) => utils.push(stmts, getBlockBodys(stmt, false)));
+                const stmts: AstNode[] = [];
+                bodyArray(child).forEach((stmt: AstNode) => {
+                    stmts.push(...getBlockBodies(stmt, false));
+                });
                 return stmts;
-            } else {
-                return [ node ];
             }
+            return [ child ];
         }
         
         return {
             type: node.type,
-            body: getBlockBodys(node, true)
+            body: getBlockBodies(node, true)
         };
     }
 
@@ -776,16 +881,16 @@ export default class Normalizer {
      * @param {WhileStatement} node
      * @return {Node}
      */
-    simplifyWhileStatement (node: Loose) {
+    simplifyWhileStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
         
         return {
             type: "WhileStatement",
-            test: { type: "Literal", value: true },
+            test: childNode(node, "test"),
             body: {
                 type: "IfStatement",
-                test: node.test,
-                consequent: node.body,
+                test: childNode(node, "test"),
+                consequent: requiredChild(node, "body"),
                 alternate: { type: "BreakStatement" }
             }
         };
@@ -796,7 +901,7 @@ export default class Normalizer {
      * @param {DoWhileStatement} node
      * @return {Node}
      */
-    simplifyDoWhileStatement (node: Loose) {
+    simplifyDoWhileStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
         
         return {
@@ -805,10 +910,10 @@ export default class Normalizer {
             body: {
                 type: "BlockStatement",
                 body: [
-                    node.body,
+                    requiredChild(node, "body"),
                     {
                         type: "IfStatement",
-                        test: node.test,
+                        test: requiredChild(node, "test"),
                         consequent: { type: "EmptyStatement" },
                         alternate: { type: "BreakStatement" }
                     }
@@ -822,31 +927,33 @@ export default class Normalizer {
      * @param {ForStatement} node
      * @return {Node}
      */
-    simplifyForStatement (node: Loose) {
+    simplifyForStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
         
-        const body: Loose[] = [];
-        if (node.init) {
-            if (estest.isStatement(node.init)) {
-                body.push(node.init);
-            } else if (estest.isExpression(node.init)) {
+        const body: AstNode[] = [];
+        const init = childNode(node, "init");
+        if (init) {
+            if (estest.isStatement(init)) {
+                body.push(init);
+            } else if (estest.isExpression(init)) {
                 body.push({
                     type: "ExpressionStatement",
-                    expression: node.init
+                    expression: init
                 });
             } else {
-                throw new Error("Invalid node.init type " + node.init.type);
+                throw new Error("Invalid node.init type " + init.type);
             }
         }
+        const update = childNode(node, "update");
         body.push({
             type: "WhileStatement",
-            test: node.test,
+            test: childNode(node, "test"),
             body: {
                 type: "BlockStatement",
-                body: blockToArray(node.body).concat(node.update ? [
+                body: blockToArray(requiredChild(node, "body")).concat(update ? [
                     {
                         type: "ExpressionStatement",
-                        expression: node.update
+                        expression: update
                     }
                 ] : [])
             }
@@ -862,23 +969,26 @@ export default class Normalizer {
      * @param {ForInStatement} node
      * @return {Node}
      */
-    simplifyForInStatement (node: Loose) {
+    simplifyForInStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
         
-        const propsName = `$$forin$props$${this.rngAlpha.get()}`, iterName = `$$forin$iter$${this.rngAlpha.get()}`;
-        const valueAtIndex = {
+        const propsName = `$$forin$props$${this.rngAlpha.get()}`;
+        const iterName = `$$forin$iter$${this.rngAlpha.get()}`;
+        const left = requiredChild(node, "left");
+        const valueAtIndex: AstNode = {
             type: "MemberExpression",
             object: { type: "Identifier", name: propsName },
             property: { type: "Identifier", name: iterName },
             computed: true
         };
-        let assignStatements;
-        if (node.left.type == "VariableDeclaration") {
-            const declaration = node.left.declarations[0];
-            if (hasArrayPattern(declaration.id) && canLowerArrayPattern(declaration.id)) {
+        let assignStatements: AstNode[];
+        if (left.type == "VariableDeclaration") {
+            const declaration = nodeDeclarations(left)[0];
+            const id = requiredChild(declaration, "id");
+            if (hasArrayPattern(id) && canLowerArrayPattern(id)) {
                 assignStatements = arrayPatternStatements(
-                    node.left.kind == "const" ? "let" : node.left.kind,
-                    declaration.id,
+                    nodeKind(left) == "const" ? "let" : nodeKind(left),
+                    id,
                     valueAtIndex,
                     this.rngAlpha
                 );
@@ -890,34 +1000,26 @@ export default class Normalizer {
                         declarations: [
                             {
                                 type: "VariableDeclarator",
-                                id: declaration.id,
+                                id: id,
                                 init: valueAtIndex
                             }
                         ]
                     }
                 ];
             }
-        } else if (hasArrayPattern(node.left) && canLowerArrayPattern(node.left)) {
+        } else if (hasArrayPattern(left) && canLowerArrayPattern(left)) {
             assignStatements = arrayPatternAssignmentStatements(
-                node.left,
+                left,
                 valueAtIndex,
                 this.rngAlpha
             );
         } else {
             assignStatements = [
-                {
-                    type: "ExpressionStatement",
-                    expression: {
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: node.left,
-                        right: valueAtIndex
-                    }
-                }
+                assignmentStatement(left, valueAtIndex)
             ];
         }
         
-        const forStmt = {
+        return {
             type: "ForStatement",
             init: {
                 type: "VariableDeclaration",
@@ -935,7 +1037,7 @@ export default class Normalizer {
                                 computed: false
                             },
                             arguments: [
-                                node.right
+                                requiredChild(node, "right")
                             ]
                         }
                     },
@@ -965,10 +1067,9 @@ export default class Normalizer {
             },
             body: {
                 type: "BlockStatement",
-                body: assignStatements.concat([node.body])
+                body: assignStatements.concat([ requiredChild(node, "body") ])
             }
         };
-        return forStmt;
     }
 
     /**
@@ -976,23 +1077,26 @@ export default class Normalizer {
      * @param {ForOfStatement} node
      * @return {Node}
      */
-    simplifyForOfStatement (node: Loose) {
+    simplifyForOfStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
-        const valuesName = `$$forof$values$${this.rngAlpha.get()}`, iterName = `$$forof$iter$${this.rngAlpha.get()}`;
-        const valueAtIndex = {
+        const valuesName = `$$forof$values$${this.rngAlpha.get()}`;
+        const iterName = `$$forof$iter$${this.rngAlpha.get()}`;
+        const left = requiredChild(node, "left");
+        const valueAtIndex: AstNode = {
             type: "MemberExpression",
             object: { type: "Identifier", name: valuesName },
             property: { type: "Identifier", name: iterName },
             computed: true
         };
-        let assignStatements;
-        if (node.left.type == "VariableDeclaration") {
-            const declaration = node.left.declarations[0];
-            if (hasArrayPattern(declaration.id) && canLowerArrayPattern(declaration.id)) {
+        let assignStatements: AstNode[];
+        if (left.type == "VariableDeclaration") {
+            const declaration = nodeDeclarations(left)[0];
+            const id = requiredChild(declaration, "id");
+            if (hasArrayPattern(id) && canLowerArrayPattern(id)) {
                 assignStatements = arrayPatternStatements(
-                    node.left.kind == "const" ? "let" : node.left.kind,
-                    declaration.id,
+                    nodeKind(left) == "const" ? "let" : nodeKind(left),
+                    id,
                     valueAtIndex,
                     this.rngAlpha
                 );
@@ -1000,34 +1104,26 @@ export default class Normalizer {
                 assignStatements = [
                     {
                         type: "VariableDeclaration",
-                        kind: node.left.kind == "const" ? "let" : node.left.kind,
+                        kind: nodeKind(left) == "const" ? "let" : nodeKind(left),
                         declarations: [
                             {
                                 type: "VariableDeclarator",
-                                id: declaration.id,
+                                id: id,
                                 init: valueAtIndex
                             }
                         ]
                     }
                 ];
             }
-        } else if (hasArrayPattern(node.left) && canLowerArrayPattern(node.left)) {
+        } else if (hasArrayPattern(left) && canLowerArrayPattern(left)) {
             assignStatements = arrayPatternAssignmentStatements(
-                node.left,
+                left,
                 valueAtIndex,
                 this.rngAlpha
             );
         } else {
             assignStatements = [
-                {
-                    type: "ExpressionStatement",
-                    expression: {
-                        type: "AssignmentExpression",
-                        operator: "=",
-                        left: node.left,
-                        right: valueAtIndex
-                    }
-                }
+                assignmentStatement(left, valueAtIndex)
             ];
         }
 
@@ -1041,7 +1137,7 @@ export default class Normalizer {
                         {
                             type: "VariableDeclarator",
                             id: { type: "Identifier", name: valuesName },
-                            init: node.right
+                            init: requiredChild(node, "right")
                         },
                         {
                             type: "VariableDeclarator",
@@ -1072,7 +1168,7 @@ export default class Normalizer {
                     },
                     body: {
                         type: "BlockStatement",
-                        body: assignStatements.concat(blockToArray(node.body))
+                        body: assignStatements.concat(blockToArray(requiredChild(node, "body")))
                     }
                 }
             ]
@@ -1084,82 +1180,71 @@ export default class Normalizer {
      * @param {SwitchStatement} node
      * @return {Node}
      */
-    simplifySwitchStatement (node: Loose) {
+    simplifySwitchStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
         
-        const cases = node.cases.map((c: Loose) => {
-            const breakIndex = _.findIndex(c.consequent, (x: Loose) => x.type == "BreakStatement");
-            let statements, breaks;
-            if (breakIndex != -1) {
-                statements = c.consequent.slice(0, breakIndex);
-                breaks = true;
-            } else {
-                statements = c.consequent;
-                breaks = false;
-            }
+        const cases = nodeArray(nodeFields(node).cases).map((caseNode: AstNode): SwitchCaseDetails => {
+            const consequent = nodeArray(nodeFields(caseNode).consequent);
+            const breakIndex = consequent.findIndex((child: AstNode) => child.type == "BreakStatement");
             return {
-                test: c.test,
-                statements: statements,
-                breaks: breaks
+                test: childNode(caseNode, "test"),
+                statements: breakIndex != -1 ? consequent.slice(0, breakIndex) : consequent,
+                breaks: breakIndex != -1
             };
         });
         
-        let stack: Loose[] = [], ifStmts: Loose[] = [];
+        let stack: SwitchCaseDetails[] = [];
+        const ifStmts: AstNode[] = [];
         for (let i = 0; i < cases.length; ++i) {
             stack.push(cases[i]);
             if (cases[i].breaks) {
-                const testName = `$$switchtest$${this.rngAlpha.get()}`;
-                var ifStmt;
+                let ifStmt: AstNode | null = null;
                 
                 for (let j = 0; j < stack.length; ++j) {
                     const sliced = stack.slice(0, j + 1);
-                    if (sliced.every((x: Loose) => x.test)) {
-                        
-                        ifStmt = {
-                            type: "BlockStatement",
-                            body: [
-                                {
-                                    type: "VariableDeclaration",
-                                    kind: "var",
-                                    declarations: [
-                                        {
-                                            type: "VariableDeclarator",
-                                            id: { type: "Identifier", name: testName }
-                                        }
-                                    ]
-                                }
-                            ]
-                        };
+                    if (sliced.every((entry: SwitchCaseDetails) => entry.test)) {
                         ifStmt = {
                             type: "IfStatement",
-                            test: chain(sliced.map((x: Loose) => {
-                                return { type: "BinaryExpression", operator: "==", left: x.test, right: node.discriminant };
+                            test: chain(sliced.map((entry: SwitchCaseDetails) => {
+                                return {
+                                    type: "BinaryExpression",
+                                    operator: "==",
+                                    left: entry.test || { type: "Literal", value: null },
+                                    right: requiredChild(node, "discriminant")
+                                };
                             }), "||"),
                             consequent: {
                                 type: "BlockStatement",
-                                body: (ifStmt ? [ ifStmt ] : []).concat(stack[j].statements)
+                                body: [
+                                    ...(ifStmt ? [ ifStmt ] : []),
+                                    ...stack[j].statements
+                                ]
                             }
                         };
                     } else {
                         ifStmt = {
                             type: "BlockStatement",
-                            body: (ifStmt ? [ ifStmt ] : []).concat(stack[j].statements)
+                            body: [
+                                ...(ifStmt ? [ ifStmt ] : []),
+                                ...stack[j].statements
+                            ]
                         };
                     }
                 }
-                ifStmts.push(ifStmt);
+                if (ifStmt) {
+                    ifStmts.push(ifStmt);
+                }
                 
-                ifStmt = null;
                 stack = [];
             }
         }
         this.logger.log(ifStmts);
-        let combinedIfStmt = ifStmts[ifStmts.length - 1];
+        let combinedIfStmt = ifStmts[ifStmts.length - 1] || { type: "EmptyStatement" };
         for (let i = ifStmts.length - 2; i >= 0; --i) {
             combinedIfStmt = {
                 type: "IfStatement",
-                test: ifStmts[i].test,
-                consequent: ifStmts[i].consequent,
+                test: requiredChild(ifStmts[i], "test"),
+                consequent: requiredChild(ifStmts[i], "consequent"),
                 alternate: combinedIfStmt
             };
         }
@@ -1171,11 +1256,13 @@ export default class Normalizer {
      * @param {TryStatement} node
      * @return {Node}
      */
-    simplifyTryStatement (node: Loose): Loose {
+    simplifyTryStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
         
-        if (node.finalizer) {
-            if (node.handler) {
+        const finalizer = childNode(node, "finalizer");
+        const handler = childNode(node, "handler");
+        if (finalizer) {
+            if (handler) {
                 return this.simplifyTryStatement({
                     type: "TryStatement",
                     block: {
@@ -1183,68 +1270,66 @@ export default class Normalizer {
                         body: [
                             {
                                 type: "TryStatement",
-                                block: node.block,
-                                handler: node.handler
+                                block: requiredChild(node, "block"),
+                                handler: handler
                             }
                         ]
                     },
-                    finalizer: node.finalizer
+                    finalizer: finalizer
                 });
-            } else {
-                const finalizer = node.finalizer;
-                traverser.traverseEx(node.block, [], function (this: { abort(): void }, node: Loose, stack: Loose) {
-                    if (stack.some((x: Loose) => estest.isFunction(x.node))) {
-                        this.abort();
-                        return node;
-                    } else if (exitsCurrentTry(node, stack)) {
-                        return withFinalizerBefore(node, finalizer);
-                    } else {
-                        return node;
-                    }
-                });
-                
-                return {
-                    type: "BlockStatement",
-                    body: [
-                        {
-                            type: "TryStatement",
-                            block: node.block,
-                            handler: {
-                                type: "CatchClause",
-                                param: { type: "Identifier", name: "toildefender$e" },
-                                body: {
-                                    type: "BlockStatement",
-                                    body: [
-                                        {
-                                            type: "VariableDeclaration",
-                                            kind: "var",
-                                            declarations: [
-                                                {
-                                                    type: "VariableDeclarator",
-                                                    id: { type: "Identifier", name: "toildefender$_e" },
-                                                    init: { type: "Identifier", name: "toildefender$e" }
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                }
-                            }
-                        },
-                        node.finalizer,
-                        {
-                            type: "IfStatement",
-                            test: { type: "Identifier", name: "toildefender$_e" },
-                            consequent: {
-                                type: "ThrowStatement",
-                                argument: { type: "Identifier", name: "toildefender$_e" }
+            }
+
+            const block = requiredChild(node, "block");
+            traverser.traverseEx(block, [], function (this: { abort(): void }, child: AstNode, stack: AstStackFrame[]) {
+                if (stack.some((x: AstStackFrame) => estest.isFunction(x.node))) {
+                    this.abort();
+                    return child;
+                } else if (exitsCurrentTry(child, stack)) {
+                    return withFinalizerBefore(child, finalizer);
+                }
+                return child;
+            });
+            
+            return {
+                type: "BlockStatement",
+                body: [
+                    {
+                        type: "TryStatement",
+                        block: block,
+                        handler: {
+                            type: "CatchClause",
+                            param: { type: "Identifier", name: "toildefender$e" },
+                            body: {
+                                type: "BlockStatement",
+                                body: [
+                                    {
+                                        type: "VariableDeclaration",
+                                        kind: "var",
+                                        declarations: [
+                                            {
+                                                type: "VariableDeclarator",
+                                                id: { type: "Identifier", name: "toildefender$_e" },
+                                                init: { type: "Identifier", name: "toildefender$e" }
+                                            }
+                                        ]
+                                    }
+                                ]
                             }
                         }
-                    ]
-                };
-            }
-        } else {
-            return node;
+                    },
+                    finalizer,
+                    {
+                        type: "IfStatement",
+                        test: { type: "Identifier", name: "toildefender$_e" },
+                        consequent: {
+                            type: "ThrowStatement",
+                            argument: { type: "Identifier", name: "toildefender$_e" }
+                        }
+                    }
+                ]
+            };
         }
+        return node;
     }
 
     /**
@@ -1254,50 +1339,56 @@ export default class Normalizer {
      * @param {CallExpression} node
      * @return {Node}
      */
-    simplifyCallExpression (node: Loose) {
+    simplifyCallExpression (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
-        if (!hasSpreadElement(node.arguments)) {
+        const args = nodeArguments(node);
+        if (!hasSpreadElement(args)) {
             return node;
         }
 
-        let thisArg = { type: "Literal", value: null };
-        if (node.callee.type == "MemberExpression") {
-            if (!isSimpleThisReceiver(node.callee.object)) {
+        const callee = requiredChild(node, "callee");
+        let thisArg: AstNode = { type: "Literal", value: null };
+        if (callee.type == "MemberExpression") {
+            const object = requiredChild(callee, "object");
+            if (!isSimpleThisReceiver(object)) {
                 return node;
             }
-            thisArg = utils.cloneISwearIKnowWhatImDoing(node.callee.object);
+            thisArg = utils.cloneISwearIKnowWhatImDoing(object);
         }
 
         return {
             type: "CallExpression",
             callee: {
                 type: "MemberExpression",
-                object: node.callee,
+                object: callee,
                 property: { type: "Identifier", name: "apply" },
                 computed: false
             },
             arguments: [
                 thisArg,
-                spreadArgumentsToArray(node.arguments)
+                spreadArgumentsToArray(args)
             ]
         };
     }
 
-    simplifyExpressionStatement (node: Loose) {
+    simplifyExpressionStatement (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
+        const expression = requiredChild(node, "expression");
+        const left = childNode(expression, "left");
         if (
-            node.expression.type == "AssignmentExpression" &&
-            node.expression.operator == "=" &&
-            hasArrayPattern(node.expression.left) &&
-            canLowerArrayPattern(node.expression.left)
+            expression.type == "AssignmentExpression" &&
+            nodeOperator(expression) == "=" &&
+            hasArrayPattern(left) &&
+            left &&
+            canLowerArrayPattern(left)
         ) {
             return {
                 type: "BlockStatement",
                 body: arrayPatternAssignmentStatements(
-                    node.expression.left,
-                    node.expression.right,
+                    left,
+                    childNode(expression, "right"),
                     this.rngAlpha
                 )
             };
@@ -1313,22 +1404,22 @@ export default class Normalizer {
      * @param {ChainExpression} node
      * @return {Node}
      */
-    simplifyChainExpression (node: Loose) {
+    simplifyChainExpression (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
-        return this.lowerOptionalChain(node.expression);
+        return this.lowerOptionalChain(requiredChild(node, "expression"));
     }
 
-    lowerOptionalChain (node: Loose): Loose {
+    lowerOptionalChain (node: AstNode): AstNode {
         if (node.type == "MemberExpression") {
-            const object: Loose = this.lowerOptionalChain(node.object);
-            const member = {
+            const object = this.lowerOptionalChain(requiredChild(node, "object"));
+            const member: AstNode = {
                 type: "MemberExpression",
                 object: utils.cloneISwearIKnowWhatImDoing(object),
-                property: node.property,
-                computed: node.computed === true
+                property: requiredChild(node, "property"),
+                computed: nodeComputed(node)
             };
-            if (node.optional === true) {
+            if (nodeFlag(node, "optional")) {
                 return {
                     type: "ConditionalExpression",
                     test: nullishTest(utils.cloneISwearIKnowWhatImDoing(object)),
@@ -1340,18 +1431,19 @@ export default class Normalizer {
         }
 
         if (node.type == "CallExpression") {
-            if (node.callee.type == "MemberExpression") {
+            const calleeNode = requiredChild(node, "callee");
+            if (calleeNode.type == "MemberExpression") {
                 return this.lowerOptionalMemberCall(node);
             }
 
-            const callee: Loose = this.lowerOptionalChain(node.callee);
-            const call = {
+            const callee = this.lowerOptionalChain(calleeNode);
+            const call: AstNode = {
                 type: "CallExpression",
                 callee: utils.cloneISwearIKnowWhatImDoing(callee),
-                arguments: node.arguments,
+                arguments: nodeArguments(node),
                 optional: false
             };
-            if (node.optional === true) {
+            if (nodeFlag(node, "optional")) {
                 return {
                     type: "ConditionalExpression",
                     test: nullishTest(utils.cloneISwearIKnowWhatImDoing(callee)),
@@ -1365,18 +1457,18 @@ export default class Normalizer {
         return node;
     }
 
-    lowerOptionalMemberCall (node: Loose): Loose {
-        const member = node.callee;
-        const object: Loose = this.lowerOptionalChain(member.object);
-        const directMember = {
+    lowerOptionalMemberCall (node: AstNode): AstNode {
+        const member = requiredChild(node, "callee");
+        const object = this.lowerOptionalChain(requiredChild(member, "object"));
+        const directMember: AstNode = {
             type: "MemberExpression",
             object: utils.cloneISwearIKnowWhatImDoing(object),
-            property: member.property,
-            computed: member.computed === true
+            property: requiredChild(member, "property"),
+            computed: nodeComputed(member)
         };
 
-        let alternate;
-        if (node.optional === true) {
+        let alternate: AstNode;
+        if (nodeFlag(node, "optional")) {
             alternate = {
                 type: "CallExpression",
                 callee: {
@@ -1385,7 +1477,7 @@ export default class Normalizer {
                     property: { type: "Identifier", name: "call" },
                     computed: false
                 },
-                arguments: [ utils.cloneISwearIKnowWhatImDoing(object) ].concat(node.arguments),
+                arguments: [ utils.cloneISwearIKnowWhatImDoing(object) ].concat(nodeArguments(node)),
                 optional: false
             };
             alternate = {
@@ -1398,12 +1490,12 @@ export default class Normalizer {
             alternate = {
                 type: "CallExpression",
                 callee: directMember,
-                arguments: node.arguments,
+                arguments: nodeArguments(node),
                 optional: false
             };
         }
 
-        if (member.optional === true) {
+        if (nodeFlag(member, "optional")) {
             return {
                 type: "ConditionalExpression",
                 test: nullishTest(utils.cloneISwearIKnowWhatImDoing(object)),
@@ -1420,18 +1512,18 @@ export default class Normalizer {
      * @param {LogicalExpression} node
      * @return {Node}
      */
-    simplifyLogicalExpression (node: Loose) {
+    simplifyLogicalExpression (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
-        if (node.operator != "??") {
+        if (nodeOperator(node) != "??") {
             return node;
         }
 
         return {
             type: "ConditionalExpression",
-            test: notNullishTest(utils.cloneISwearIKnowWhatImDoing(node.left)),
-            consequent: node.left,
-            alternate: node.right
+            test: notNullishTest(utils.cloneISwearIKnowWhatImDoing(requiredChild(node, "left"))),
+            consequent: requiredChild(node, "left"),
+            alternate: requiredChild(node, "right")
         };
     }
 
@@ -1440,22 +1532,22 @@ export default class Normalizer {
      * @param {ObjectExpression} node
      * @return {Node}
      */
-    simplifyObjectExpression (node: Loose) {
+    simplifyObjectExpression (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
         if (!hasObjectSpread(node)) {
             return node;
         }
 
-        const parts: Loose[] = [
+        const parts: AstNode[] = [
             {
                 type: "ObjectExpression",
                 properties: []
             }
         ];
-        let pending: Loose[] = [];
+        let pending: AstNode[] = [];
 
-        function flushPending() {
+        function flushPending(): void {
             if (pending.length > 0) {
                 parts.push({
                     type: "ObjectExpression",
@@ -1465,10 +1557,10 @@ export default class Normalizer {
             }
         }
 
-        node.properties.forEach((prop: Loose) => {
+        nodeProperties(node).forEach((prop: AstNode) => {
             if (prop.type == "SpreadElement") {
                 flushPending();
-                parts.push(prop.argument);
+                parts.push(requiredChild(prop, "argument"));
             } else {
                 pending.push(prop);
             }
@@ -1487,17 +1579,24 @@ export default class Normalizer {
      * @param {Node[]} stack
      * @return {Node}
      */
-    simplifyVariableDeclaration (node: Loose, stack: Loose) {
+    simplifyVariableDeclaration (node: AstNode, stack: AstStackFrame[]): AstNode {
         assert.ok(estest.isNode(node));
 
-        const needsLowering = node.declarations.some((decl: Loose) => hasObjectPattern(decl.id) || hasArrayPattern(decl.id));
+        const declarations = nodeDeclarations(node);
+        const needsLowering = declarations.some((decl: AstNode) => hasObjectPattern(childNode(decl, "id")) || hasArrayPattern(childNode(decl, "id")));
         if (!needsLowering) {
             return node;
         }
-        if (node.declarations.some((decl: Loose) => hasObjectPattern(decl.id) && !canLowerObjectRest(decl.id))) {
+        if (declarations.some((decl: AstNode) => {
+            const id = childNode(decl, "id");
+            return hasObjectPattern(id) && id !== null && !canLowerObjectRest(id);
+        })) {
             return node;
         }
-        if (node.declarations.some((decl: Loose) => hasArrayPattern(decl.id) && !canLowerArrayPattern(decl.id))) {
+        if (declarations.some((decl: AstNode) => {
+            const id = childNode(decl, "id");
+            return hasArrayPattern(id) && id !== null && !canLowerArrayPattern(id);
+        })) {
             return node;
         }
 
@@ -1513,11 +1612,11 @@ export default class Normalizer {
             return node;
         }
 
-        let statements: Loose[] = [];
-        let normalDeclarations: Loose[] = [];
+        let statements: AstNode[] = [];
+        let normalDeclarations: AstNode[] = [];
         const declarationKind = "var";
 
-        function flushNormalDeclarations() {
+        function flushNormalDeclarations(): void {
             if (normalDeclarations.length > 0) {
                 statements.push({
                     type: "VariableDeclaration",
@@ -1528,19 +1627,20 @@ export default class Normalizer {
             }
         }
 
-        node.declarations.forEach((decl: Loose) => {
-            if (!hasObjectPattern(decl.id) && !hasArrayPattern(decl.id)) {
+        declarations.forEach((decl: AstNode) => {
+            const id = requiredChild(decl, "id");
+            if (!hasObjectPattern(id) && !hasArrayPattern(id)) {
                 normalDeclarations.push(decl);
                 return;
             }
 
             flushNormalDeclarations();
 
-            if (hasArrayPattern(decl.id)) {
+            if (hasArrayPattern(id)) {
                 statements = statements.concat(arrayPatternStatements(
                     "var",
-                    decl.id,
-                    decl.init,
+                    id,
+                    childNode(decl, "init"),
                     this.rngAlpha
                 ));
                 return;
@@ -1554,13 +1654,13 @@ export default class Normalizer {
                     {
                         type: "VariableDeclarator",
                         id: { type: "Identifier", name: sourceName },
-                        init: decl.init || { type: "ObjectExpression", properties: [] }
+                        init: fallbackExpression(childNode(decl, "init"), { type: "ObjectExpression", properties: [] })
                     }
                 ]
             });
 
-            const excluded: Loose[] = [];
-            decl.id.properties.forEach((prop: Loose) => {
+            const excluded: string[] = [];
+            nodeProperties(id).forEach((prop: AstNode) => {
                 if (prop.type == "RestElement") {
                     statements.push({
                         type: "VariableDeclaration",
@@ -1568,7 +1668,7 @@ export default class Normalizer {
                         declarations: [
                             {
                                 type: "VariableDeclarator",
-                                id: prop.argument,
+                                id: requiredChild(prop, "argument"),
                                 init: objectWithoutKeysCall(
                                     { type: "Identifier", name: sourceName },
                                     excluded
@@ -1599,29 +1699,33 @@ export default class Normalizer {
      * @param {ArrowFunctionExpression} node
      * @return {Node}
      */
-    simplifyArrowFunctionExpression (node: Loose) {
+    simplifyArrowFunctionExpression (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
-        let fn = {
+        const body = requiredChild(node, "body");
+        let fn: AstNode = {
             type: "FunctionExpression",
             id: null,
-            params: node.params,
-            body: node.body.type == "BlockStatement" ? node.body : {
+            params: nodeParams(node),
+            body: body.type == "BlockStatement" ? body : {
                 type: "BlockStatement",
                 body: [
                     {
                         type: "ReturnStatement",
-                        argument: node.body
+                        argument: body
                     }
                 ]
             },
             generator: false,
             expression: false,
-            async: node.async === true
+            async: nodeFlag(node, "async")
         };
+        if (nodeFlag(node, "toildefender$noNumericVm")) {
+            setNodeField(fn, "toildefender$noNumericVm", true);
+        }
         fn = lowerFunctionParameters(fn);
 
-        if (!containsThisExpression(fn.body)) {
+        if (!containsThisExpression(requiredChild(fn, "body"))) {
             return fn;
         }
 
@@ -1645,54 +1749,57 @@ export default class Normalizer {
      * @param {ClassDeclaration} node
      * @return {Node}
      */
-    simplifyClassDeclaration (node: Loose) {
+    simplifyClassDeclaration (node: AstNode): AstNode {
         assert.ok(estest.isNode(node));
 
-        const className = node.id && node.id.name || `$$class$${this.rngAlpha.get()}`;
-        const privateStores: Record<string, Loose> = {};
-        const instanceInitializers: Loose[] = [];
-        const staticAssignments: Loose[] = [];
-        const methods: Loose[] = [];
+        const className = nodeName(childNode(node, "id")) || `$$class$${this.rngAlpha.get()}`;
+        const privateStores: PrivateStores = {};
+        const instanceInitializers: AstNode[] = [];
+        const staticAssignments: AstNode[] = [];
+        const methods: AstNode[] = [];
+        const classBody = requiredChild(node, "body");
 
-        node.body.body.forEach((element: Loose) => {
+        bodyArray(classBody).forEach((element: AstNode) => {
             if (element.type != "PropertyDefinition" && element.type != "FieldDefinition") {
                 methods.push(element);
                 return;
             }
 
-            if (element.key.type == "PrivateIdentifier") {
-                const storeName = privateStoreName(className, element.key.name);
-                privateStores[element.key.name] = storeName;
-                if (element.static) {
+            const key = requiredChild(element, "key");
+            if (key.type == "PrivateIdentifier") {
+                const keyName = nodeName(key) || "";
+                const storeName = privateStoreName(className, keyName);
+                privateStores[keyName] = storeName;
+                if (nodeFlag(element, "static")) {
                     staticAssignments.push(weakMapSetStatement(
                         storeName,
                         { type: "Identifier", name: className },
-                        element.value
+                        childNode(element, "value")
                     ));
                 } else {
                     instanceInitializers.push(weakMapSetStatement(
                         storeName,
                         { type: "ThisExpression" },
-                        element.value
+                        childNode(element, "value")
                     ));
                 }
                 return;
             }
 
-            const target = {
+            const target: AstNode = {
                 type: "MemberExpression",
-                object: element.static ? { type: "Identifier", name: className } : { type: "ThisExpression" },
+                object: nodeFlag(element, "static") ? { type: "Identifier", name: className } : { type: "ThisExpression" },
                 property: classFieldKey(element),
-                computed: element.computed === true || element.key.type == "Literal"
+                computed: nodeComputed(element) || key.type == "Literal"
             };
-            if (element.static) {
-                staticAssignments.push(assignmentStatement(target, element.value));
+            if (nodeFlag(element, "static")) {
+                staticAssignments.push(assignmentStatement(target, childNode(element, "value")));
             } else {
-                instanceInitializers.push(assignmentStatement(target, element.value));
+                instanceInitializers.push(assignmentStatement(target, childNode(element, "value")));
             }
         });
 
-        methods.forEach((method: Loose) => {
+        methods.forEach((method: AstNode) => {
             this.lowerPrivateMembers(method, privateStores);
         });
 
@@ -1709,7 +1816,7 @@ export default class Normalizer {
                         params: [],
                         body: {
                             type: "BlockStatement",
-                            body: node.superClass ? [
+                            body: childNode(node, "superClass") ? [
                                 {
                                     type: "ExpressionStatement",
                                     expression: {
@@ -1730,20 +1837,24 @@ export default class Normalizer {
                 methods.unshift(constructor);
             }
 
-            const body = constructor.value.body.body;
+            const constructorValue = requiredChild(constructor, "value");
+            const constructorBody = requiredChild(constructorValue, "body");
+            const body = mutableBody(constructorBody);
             let insertAt = 0;
-            if (node.superClass) {
-                const superIndex = body.findIndex((stmt: Loose) => stmt.type == "ExpressionStatement"
-                    && stmt.expression.type == "CallExpression"
-                    && stmt.expression.callee.type == "Super");
+            if (childNode(node, "superClass")) {
+                const superIndex = body.findIndex((stmt: AstNode) => {
+                    const expression = childNode(stmt, "expression");
+                    const callee = expression ? childNode(expression, "callee") : null;
+                    return stmt.type == "ExpressionStatement" && expression?.type == "CallExpression" && callee?.type == "Super";
+                });
                 insertAt = superIndex == -1 ? 0 : superIndex + 1;
             }
-            body.splice.apply(body, [insertAt, 0].concat(instanceInitializers));
+            body.splice(insertAt, 0, ...instanceInitializers);
         }
 
-        node.body.body = methods;
+        setNodeField(classBody, "body", methods);
 
-        const privateDeclarations = Object.keys(privateStores).map((name: Loose) => {
+        const privateDeclarations: AstNode[] = Object.keys(privateStores).map((name: string) => {
             return {
                 type: "VariableDeclaration",
                 kind: "var",
@@ -1767,12 +1878,16 @@ export default class Normalizer {
 
         return {
             type: "BlockStatement",
-            body: (privateDeclarations as Loose[]).concat([node]).concat(staticAssignments)
+            body: [
+                ...privateDeclarations,
+                node,
+                ...staticAssignments
+            ]
         };
     }
 
-    lowerPrivateMembers (node: Loose, privateStores: Loose) {
-        traverser.traverse(node, [], (child: Loose, stack: Loose) => {
+    lowerPrivateMembers (node: AstNode, privateStores: PrivateStores): void {
+        traverser.traverse(node, [], (child: AstNode, stack: AstStackFrame[]) => {
             const parentFrame = stack[1];
             if (child.type == "MemberExpression"
                 && parentFrame
@@ -1780,31 +1895,34 @@ export default class Normalizer {
                 && parentFrame.key == "left") {
                 return child;
             }
-            if (child.type == "AssignmentExpression"
-                && child.left.type == "MemberExpression"
-                && child.left.property.type == "PrivateIdentifier"
-                && privateStores[child.left.property.name]) {
-                return {
-                    type: "CallExpression",
-                    callee: {
-                        type: "MemberExpression",
-                        object: { type: "Identifier", name: privateStores[child.left.property.name] },
-                        property: { type: "Identifier", name: "set" },
-                        computed: false
-                    },
-                    arguments: [
-                        child.left.object,
-                        child.right
-                    ]
-                };
+            const left = childNode(child, "left");
+            if (child.type == "AssignmentExpression" && left?.type == "MemberExpression") {
+                const property = childNode(left, "property");
+                const storeName = property?.type == "PrivateIdentifier" ? privateStores[nodeName(property) || ""] : undefined;
+                if (storeName) {
+                    return {
+                        type: "CallExpression",
+                        callee: {
+                            type: "MemberExpression",
+                            object: { type: "Identifier", name: storeName },
+                            property: { type: "Identifier", name: "set" },
+                            computed: false
+                        },
+                        arguments: [
+                            requiredChild(left, "object"),
+                            requiredChild(child, "right")
+                        ]
+                    };
+                }
             }
-            if (child.type == "MemberExpression"
-                && child.property.type == "PrivateIdentifier"
-                && privateStores[child.property.name]) {
-                return weakMapGetExpression(privateStores[child.property.name], child.object);
+            if (child.type == "MemberExpression") {
+                const property = childNode(child, "property");
+                const storeName = property?.type == "PrivateIdentifier" ? privateStores[nodeName(property) || ""] : undefined;
+                if (storeName) {
+                    return weakMapGetExpression(storeName, requiredChild(child, "object"));
+                }
             }
             return child;
         });
     }
-
-};
+}

@@ -1,12 +1,84 @@
 import assert from "assert";
-import path from "path";
-import _ from "lodash";
 import escope from "escope";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import ESUtils from "../esutils.js";
 import utils from "../utils.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike, ReferenceLike } from "../types.js";
+
+type RequireProcessor = (node: AstNode, stack: AstStackFrame[]) => AstNode;
+
+interface ModuleReference extends ReferenceLike {
+    identifier: AstNode;
+}
+
+interface ModuleScope {
+    references: ModuleReference[];
+}
+
+interface ModuleScopeManager {
+    scopes: ModuleScope[];
+}
+
+function nodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = (node as Record<string, unknown>)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function literalValue(node: AstNode | null): unknown {
+    return (node as { value?: unknown } | null)?.value;
+}
+
+function nodeArguments(node: AstNode): AstNode[] {
+    return nodeArray((node as { arguments?: unknown }).arguments);
+}
+
+function nodeBody(node: AstNode): AstNode[] {
+    return nodeArray((node as { body?: unknown }).body);
+}
+
+function setNodeBody(node: AstNode, body: AstNode[]): void {
+    (node as { body?: AstNode[] }).body = body;
+}
+
+function parentOf(node: AstNode): AstNode | null {
+    const parent = (node as { toildefender$parent?: unknown }).toildefender$parent;
+    return estest.isNode(parent) ? parent : null;
+}
+
+function isIdentifierNamed(node: AstNode | null, name: string): boolean {
+    return node?.type == "Identifier" && nodeName(node) == name;
+}
+
+function isRequireCall(node: AstNode): boolean {
+    return node.type == "CallExpression" && isIdentifierNamed(childNode(node, "callee"), "require");
+}
+
+function firstStringArgument(node: AstNode): string | null {
+    const first = nodeArguments(node)[0] || null;
+    const value = literalValue(first);
+    return typeof value == "string" ? value : null;
+}
+
+function isModuleExportsMember(node: AstNode | null): boolean {
+    if (!node || node.type != "MemberExpression") {
+        return false;
+    }
+
+    const object = childNode(node, "object");
+    const property = childNode(node, "property");
+    return isIdentifierNamed(object, "module")
+        && (isIdentifierNamed(property, "exports") || (property?.type == "Literal" && literalValue(property) == "exports"));
+}
 
 /**
  * Transform calls to require().
@@ -14,16 +86,15 @@ import type { Loose } from "../types.js";
  * @param {Function} processor Transformer
  * @returns {Node} Root node
  */
-function findRequires(node: Loose, processor: Loose) {
+function findRequires(node: AstNode, processor: RequireProcessor): AstNode {
     assert.ok(estest.isNode(node));
     assert.equal(typeof processor, "function");
     
-    return traverser.traverse(node, [], (node: Loose, stack: Loose) => {
-        if (node.type == "CallExpression" && node.callee.type == "Identifier" && node.callee.name == "require") {
-            return processor(node, stack);
-        } else {
-            return node;
+    return traverser.traverse(node, [], (child: AstNode, stack: AstStackFrame[]) => {
+        if (isRequireCall(child)) {
+            return processor(child, stack);
         }
+        return child;
     });
 }
 
@@ -32,8 +103,8 @@ function findRequires(node: Loose, processor: Loose) {
  * @param {string} path
  * @returns {string[]}
  */
-function splitPath(path: Loose) {
-    return path.split(/[\/\\]/g).filter((x: Loose) => x != null && x.length > 0);
+function splitPath(path: string): string[] {
+    return path.split(/[\\/]/g).filter((part: string) => part.length > 0);
 }
 
 /**
@@ -41,7 +112,7 @@ function splitPath(path: Loose) {
  * @param {string[]} path
  * @returns {string}
  */
-function normalizePath(path: Loose) {
+function normalizePath(path: string): string {
     const parts = splitPath(path);
     
     for (let i = parts.length - 1; i >= 0; --i) {
@@ -60,7 +131,7 @@ function normalizePath(path: Loose) {
  * @param {string} path
  * @returns {string}
  */
-function getPathDir(path: Loose) {
+function getPathDir(path: string): string {
     return splitPath(path).slice(0, -1).join("/");
 }
 
@@ -71,15 +142,15 @@ function getPathDir(path: Loose) {
  * @param {string} path Path
  * @returns {string}
  */
-function resolvePath(curr: Loose, path: Loose) {
+function resolvePath(curr: string, path: string): string {
     return normalizePath(getPathDir(curr) + "/" + path);
 }
 
 export default class Modules {
-    logger: Loose;
-    esutils: Loose;
+    logger: LoggerLike;
+    esutils: ESUtils;
 
-    constructor (logger: Loose) {
+    constructor (logger: LoggerLike) {
         this.logger = logger;
         this.esutils = new ESUtils(logger);
     }
@@ -90,24 +161,20 @@ export default class Modules {
      * @param {Node} replacement Replacement
      * @returns {Node} Root node
      */
-    replaceExportsReferences (ast: Loose, replacement: Loose) {
+    replaceExportsReferences (ast: AstNode, replacement: AstNode): AstNode {
         this.esutils.setParentsRecursive(ast);
         
-        const scopeManager = escope.analyze(ast, { optimistic: true });
+        const scopeManager = escope.analyze(ast, { optimistic: true }) as unknown as ModuleScopeManager;
         
-        scopeManager.scopes.forEach((scope: Loose) => {
+        scopeManager.scopes.forEach((scope: ModuleScope) => {
             scope.references
-            .filter((reference: Loose) => !utils.isResolvedReference(reference))
-            .forEach((reference: Loose) => {
-                const parent = reference.identifier.toildefender$parent;
+            .filter((reference: ModuleReference) => !utils.isResolvedReference(reference))
+            .forEach((reference: ModuleReference) => {
+                const parent = parentOf(reference.identifier);
                 
-                if (reference.identifier.name == "exports") {
+                if (nodeName(reference.identifier) == "exports") {
                     this.esutils.replaceNode(ast, reference.identifier, utils.cloneISwearIKnowWhatImDoing(replacement));
-                } else if (
-                    parent.type == "MemberExpression"
-                    && (parent.object.type == "Identifier" && parent.object.name == "module")
-                    && ((parent.property.type == "Identifier" && parent.property.name == "exports") || (parent.property.type == "Literal" && parent.property.value == "exports"))
-                ) {
+                } else if (parent && isModuleExportsMember(parent)) {
                     this.esutils.replaceNode(ast, parent, utils.cloneISwearIKnowWhatImDoing(replacement));
                 }
             });
@@ -123,73 +190,79 @@ export default class Modules {
      * @param {ScopeManager} scopeManager Scope manager
      * @returns {Node} Transformed root node
      */
-    merge (modules: Loose, mainKey: Loose, scopeManager: Loose) {
+    merge (modules: Record<string, AstNode>, mainKey: string, _scopeManager: unknown): AstNode {
         assert.ok(Object.keys(modules).length > 0);
         assert.equal(typeof mainKey, "string");
         
-        modules = _.mapKeys(modules, (value: Loose, key: Loose) => normalizePath(key));
-        mainKey = normalizePath(mainKey);
+        const normalizedModules: Record<string, AstNode> = {};
+        for (const [key, value] of Object.entries(modules)) {
+            normalizedModules[normalizePath(key)] = value;
+        }
+        const normalizedMainKey = normalizePath(mainKey);
         
-        const declaration: Loose = {
+        const declarationDeclarations: AstNode[] = [];
+        const declaration: AstNode = {
             type: "VariableDeclaration",
             kind: "var",
-            declarations: []
+            declarations: declarationDeclarations
         };
-        const embeds: Loose[] = [];
+        const embeds: AstNode[] = [];
         
         const rng = new utils.UniqueRandomAlpha(3);
         
-        const processedModules: Record<string, Loose> = {};
+        const processedModules: Record<string, string> = {};
         
-        const requiresOrder: Loose[] = [];
-        
-        const walkDeps = (key: Loose, stack: Loose = []) => {
+        const walkDeps = (key: string, stack: string[] = []): void => {
+            const moduleAst = normalizedModules[key];
+            if (!moduleAst) {
+                this.logger.warn(`Local module not found: ${key}`);
+                return;
+            }
             
-            findRequires(modules[key], (node: Loose) => {
-                let path = node.arguments.length > 0 && node.arguments[0].value;
+            findRequires(moduleAst, (node: AstNode) => {
+                const requestPath = firstStringArgument(node);
 
-                if (!path) {
+                if (!requestPath) {
                     return node;
                 }
                 
-                if (![ "/", "./", "../" ].some((x: Loose) => path.indexOf(x) == 0)) {
+                if (![ "/", "./", "../" ].some((prefix: string) => requestPath.startsWith(prefix))) {
                     return node;
                 }
                 
-                path = resolvePath(key, path);
+                let requiredPath = resolvePath(key, requestPath);
                 
-                if (path.slice(-3) == ".js") {
-                    path = path.slice(0, -3);
+                if (requiredPath.slice(-3) == ".js") {
+                    requiredPath = requiredPath.slice(0, -3);
                 }
                 
-                if (!modules[path]) {
-                    path = path + ".js";
+                if (!normalizedModules[requiredPath]) {
+                    requiredPath = requiredPath + ".js";
                 }
                 
-                requiresOrder.push(path);
-                
-                let _module = modules[path];
-                if (!_module) {
-                    this.logger.warn(`Local module not found: ${path}`);
+                let requiredModule = normalizedModules[requiredPath];
+                if (!requiredModule) {
+                    this.logger.warn(`Local module not found: ${requiredPath}`);
                     return node;
                 }
                 
-                if (stack.indexOf(path) == -1) {
-                    walkDeps(path, stack.concat(path));
+                if (stack.indexOf(requiredPath) == -1) {
+                    walkDeps(requiredPath, stack.concat(requiredPath));
                 } else {
-                    this.logger.warn("Skipping cyclic depedency: " + path);
+                    this.logger.warn("Skipping cyclic depedency: " + requiredPath);
                 }
                 
-                if (!processedModules[path]) {
-                    const id = processedModules[path] = "$$module$" + rng.get();
+                if (!processedModules[requiredPath]) {
+                    const id = "$$module$" + rng.get();
+                    processedModules[requiredPath] = id;
                 
-                    declaration.declarations.push({
+                    declarationDeclarations.push({
                         type: "VariableDeclarator",
                         id: { type: "Identifier", name: id },
                         init: { type: "ObjectExpression", properties: [] }
                     });
                     
-                    _module = this.replaceExportsReferences(_module, { type: "Identifier", name: id });
+                    requiredModule = this.replaceExportsReferences(requiredModule, { type: "Identifier", name: id });
                     
                     embeds.push({
                         type: "ExpressionStatement",
@@ -197,32 +270,32 @@ export default class Modules {
                             type: "CallExpression",
                             callee: {
                                 type: "FunctionExpression",
-                                params: [
-                                ],
+                                params: [],
                                 body: {
                                     type: "BlockStatement",
-                                    body: _module.body
+                                    body: nodeBody(requiredModule)
                                 }
                             },
-                            arguments: [
-                                
-                            ]
+                            arguments: []
                         },
-                        toildefender$module: path
+                        toildefender$module: requiredPath
                     });
                 }
                 
-                return { type: "Identifier", name: processedModules[path] };
+                return { type: "Identifier", name: processedModules[requiredPath] };
             });
         };
-        walkDeps(mainKey);
+        walkDeps(normalizedMainKey);
         
+        const mainModule = normalizedModules[normalizedMainKey];
+        assert.ok(mainModule, `Main module not found: ${normalizedMainKey}`);
+
         // Check whether the VariableDeclaration contains VariableDeclarators, because an empty VariableDeclaration causes errors
-        if (declaration.declarations.length > 0) {
-            modules[mainKey].body = [ declaration ].concat(embeds).concat(modules[mainKey].body);
+        if (declarationDeclarations.length > 0) {
+            setNodeBody(mainModule, [ declaration ].concat(embeds).concat(nodeBody(mainModule)));
         }
         
-        return modules[mainKey];
+        return mainModule;
     }
 
 };

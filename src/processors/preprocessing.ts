@@ -1,11 +1,10 @@
-import _ from "lodash";
 import {Parser} from "expr-eval-fork";
+import type { Value, Values } from "expr-eval-fork";
 import type { LoggerLike } from "../types.js";
-import type { Loose } from "../types.js";
 
 type PreprocessorDefines = Record<string, string | number | boolean | null | undefined>;
 
-const DEFAULT_PREPROCESSOR_VARIABLES = {
+const DEFAULT_PREPROCESSOR_VARIABLES: PreprocessorDefines = {
     "true": 1,
     "false": 0
 };
@@ -23,7 +22,7 @@ function normalizeConditionSyntax(condition: string): string {
  * @returns {string}
  */
 function codeFromNodeArray(nodes: TextNode[]): string {
-    const lines: Loose[] = [];
+    const lines: string[] = [];
     for (const node of nodes) {
         lines[node.line] = node.text;
     }
@@ -36,11 +35,26 @@ function codeFromNodeArray(nodes: TextNode[]): string {
  * @returns {string}
  */
 function removeShebangs(code: string): string {
-    if (_.startsWith(code, "#!")) {
+    if (code.startsWith("#!")) {
         code = code.split(/\r?\n/).slice(1).join("\n");
     }
 
     return code;
+}
+
+function toExpressionValue(value: string | number | boolean | null | undefined): Value {
+    if (typeof value == "number" || typeof value == "string") {
+        return value;
+    }
+    return value === true ? 1 : 0;
+}
+
+function toExpressionValues(defines: PreprocessorDefines): Values {
+    const values: Values = {};
+    for (const [key, value] of Object.entries(defines)) {
+        values[key] = toExpressionValue(value);
+    }
+    return values;
 }
 
 class ArrayUtils {
@@ -60,11 +74,8 @@ class ArrayUtils {
 }
 
 class Node {
-    line: Loose = 0;
+    line = 0;
 
-    constructor() {
-
-    }
     /**
      * Evaluates tree into an array of TextNodes.
      * @param {Object.<string, string>} defines Preprocessor variables
@@ -83,7 +94,7 @@ class BlockNode extends Node {
         this.children = [];
     }
     eval(defines: PreprocessorDefines): TextNode[] {
-        return _.flatten(this.children.map((x: Loose) => x.eval(defines)));
+        return this.children.flatMap((child) => child.eval(defines));
     }
 }
 
@@ -140,10 +151,10 @@ class IfBlockNode extends BlockNode {
      */
     evalCond(defines: PreprocessorDefines): boolean {
         let condition = this.condition;
-        condition = condition.replace(/!defined\(([\w\d]+)\)/g, (match: Loose, p1: Loose) => !defines.hasOwnProperty(p1) ? "true" : "false");
-        condition = condition.replace(/defined\(([\w\d]+)\)/g, (match: Loose, p1: Loose) => defines.hasOwnProperty(p1) ? "true" : "false");
+        condition = condition.replace(/!defined\(([\w\d]+)\)/g, (_match: string, p1: string) => Object.hasOwn(defines, p1) ? "false" : "true");
+        condition = condition.replace(/defined\(([\w\d]+)\)/g, (_match: string, p1: string) => Object.hasOwn(defines, p1) ? "true" : "false");
         condition = normalizeConditionSyntax(condition);
-        return Boolean(Parser.evaluate(condition, defines as Loose));
+        return Boolean(Parser.evaluate(condition, toExpressionValues(defines)));
     }
     /**
      * Evaluates node with given condition result.
@@ -201,9 +212,10 @@ export default class Preprocessing {
             return block;
         };
 
-        const defines: Record<string, Loose> = {};
-        _.merge(defines, DEFAULT_PREPROCESSOR_VARIABLES);
-        _.merge(defines, preprocessorVariables);
+        const defines: PreprocessorDefines = {
+            ...DEFAULT_PREPROCESSOR_VARIABLES,
+            ...preprocessorVariables
+        };
 
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
@@ -232,7 +244,7 @@ export default class Preprocessing {
                 case "ifdef":
                 case "ifndef": {
                     const elem =
-                        directive == "if" ? new IfBlockNode(parameters) :
+                        directive == "if" ? new IfBlockNode(parameters || "") :
                         directive == "ifdef" ? new IfBlockNode(`defined(${parameters})`) :
                         directive == "ifndef" ? new IfBlockNode(`!defined(${parameters})`) :
                         new IfBlockNode(parameters || "");

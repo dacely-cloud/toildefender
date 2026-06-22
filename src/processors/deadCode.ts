@@ -1,5 +1,4 @@
 import assert from "assert";
-import _ from "lodash";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import utils from "../utils.js";
@@ -9,6 +8,11 @@ const KEYWORDS = ["await","break","case","catch","class","const","continue","deb
 
 function isClassMethodBody(stack: AstStackFrame[]): boolean {
     return stack.some((frame: AstStackFrame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+}
+
+function blockBody(node: AstNode): AstNode[] {
+    const body = (node as { body?: unknown }).body;
+    return Array.isArray(body) ? (body as AstNode[]) : [];
 }
 
 function containsLexicalDeclaration(node: AstNode): boolean {
@@ -57,23 +61,28 @@ export default class DeadCode {
 
         return traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (node.type == "BlockStatement" && !isClassMethodBody(stack)) {
+                const body = blockBody(node);
+                if (body.length == 0) {
+                    return node;
+                }
+
                 for (let i = 0; i < probability; ++i) {
                     if (probability - i < Math.random()) {
                         continue;
                     }
 
-                    const pos = utils.random(0, node.body.length - 1);
-                    const len = utils.random(1, node.body.length - pos);
+                    const pos = utils.random(0, body.length - 1);
+                    const len = utils.random(1, body.length - pos);
 
-                    const varValue = _.sample(KEYWORDS);
+                    const varValue = KEYWORDS[utils.random(0, KEYWORDS.length)] || KEYWORDS[0];
 
-                    const selected = node.body.slice(pos, pos + len);
+                    const selected = body.slice(pos, pos + len);
                     if (selected.some(containsLexicalDeclaration)) {
                         continue;
                     }
 
-                    const spliced = node.body.splice(pos, len);
-                    node.body.splice(pos, 0,
+                    const spliced = body.splice(pos, len);
+                    body.splice(pos, 0,
                         {
                             type: "IfStatement",
                             test: {

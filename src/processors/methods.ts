@@ -81,23 +81,120 @@ function toildefender$fromCharCodes() {
 `;
 
 import assert from "assert";
-import fs from "fs";
-import _ from "lodash";
-import escope from "escope";
 import * as esprima from "esprima";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import utils from "../utils.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike, ReferenceLike } from "../types.js";
 
 const ANON_METHOD_ID = "toildefender$anonymousMethodId";
+
+interface MethodReference extends ReferenceLike {
+    identifier: AstNode;
+}
+
+interface MethodScope {
+    references: MethodReference[];
+}
+
+interface MethodScopeManager {
+    acquire(method: AstNode): MethodScope | null;
+}
+
+interface MethodEntryPoint {
+    dispatcher?: string;
+    entry: number;
+}
+
+function nodeFields(node: AstNode): Record<string, unknown> {
+    return node as unknown as Record<string, unknown>;
+}
+
+function astArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = nodeFields(node)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function setChildValue(node: AstNode, key: string, value: unknown): void {
+    nodeFields(node)[key] = value;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function setNodeName(node: AstNode, name: string): void {
+    (node as { name?: string }).name = name;
+}
+
+function nodeComputed(node: AstNode): boolean {
+    return (node as { computed?: unknown }).computed === true;
+}
+
+function nodeFlag(node: AstNode, key: "async" | "expression" | "generator" | "toildefender$numericVmInternal" | "toildefender$rawArguments" | "toildefender$removeFirstArguments"): boolean {
+    return (node as Record<string, unknown>)[key] === true;
+}
+
+function nodeValue(node: AstNode): unknown {
+    return nodeFields(node).value;
+}
+
+function setNodeValue(node: AstNode, value: unknown): void {
+    nodeFields(node).value = value;
+}
+
+function nodeParams(node: AstNode): AstNode[] {
+    return astArray(nodeFields(node).params);
+}
+
+function setNodeParams(node: AstNode, params: AstNode[]): void {
+    nodeFields(node).params = params;
+}
+
+function mutableBody(node: AstNode): AstNode[] {
+    const body = nodeFields(node).body;
+    if (Array.isArray(body)) {
+        return body as AstNode[];
+    }
+    const nextBody: AstNode[] = [];
+    nodeFields(node).body = nextBody;
+    return nextBody;
+}
+
+function functionBody(method: AstNode): AstNode {
+    return childNode(method, "body") || { type: "BlockStatement", body: [] };
+}
+
+function anonName(node: AstNode): string | null {
+    const value = nodeFields(node)[ANON_METHOD_ID];
+    return typeof value == "string" ? value : null;
+}
+
+function defineAnonName(node: AstNode): string {
+    const existing = anonName(node);
+    if (existing) {
+        return existing;
+    }
+    const value = `toildefender$anon$${utils.hash(node)}`;
+    Object.defineProperty(node, ANON_METHOD_ID, {
+        configurable: false,
+        enumerable: false,
+        value
+    });
+    return value;
+}
 
 /**
  * Wrap function with toildefender$bind.
  * @param {Identifier} Function identifier
  * @returns {Node} Wrapped function
  */
-function createMethodStub(id: Loose) {
+function createMethodStub(id: AstNode): AstNode {
     assert.equal(id.type, "Identifier");
     
     return {
@@ -109,38 +206,27 @@ function createMethodStub(id: Loose) {
     };
 }
 
-function anonymousMethodName(node: Loose) {
+function anonymousMethodName(node: AstNode): string {
     assert.equal(node.type, "FunctionExpression");
-
-    if (!node[ANON_METHOD_ID]) {
-        Object.defineProperty(node, ANON_METHOD_ID, {
-            configurable: false,
-            enumerable: false,
-            value: `toildefender$anon$${utils.hash(node)}`
-        });
-    }
-
-    return node[ANON_METHOD_ID];
+    return defineAnonName(node);
 }
 
-function functionDeclarationName(node: Loose) {
+function functionDeclarationName(node: AstNode): string {
     assert.equal(node.type, "FunctionDeclaration");
 
-    if (!node.id || !node.id.name) {
-        if (!node[ANON_METHOD_ID]) {
-            Object.defineProperty(node, ANON_METHOD_ID, {
-                configurable: false,
-                enumerable: false,
-                value: `toildefender$anon$${utils.hash(node)}`
-            });
-        }
-        node.id = { type: "Identifier", name: node[ANON_METHOD_ID] };
+    let id = childNode(node, "id");
+    const name = nodeName(id);
+    if (!id || !name) {
+        const generated = defineAnonName(node);
+        id = { type: "Identifier", name: generated };
+        setChildValue(node, "id", id);
+        return generated;
     }
 
-    return node.id.name;
+    return name;
 }
 
-function isReferenceIdentifier(node: Loose, stack: Loose) {
+function isReferenceIdentifier(node: AstNode, stack: AstStackFrame[]): boolean {
     const parentFrame = stack[1];
     if (!parentFrame) {
         return true;
@@ -158,10 +244,10 @@ function isReferenceIdentifier(node: Loose, stack: Loose) {
     if (parent.type == "CatchClause" && key == "param") {
         return false;
     }
-    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) {
+    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && !nodeComputed(parent)) {
         return false;
     }
-    if (parent.type == "Property" && key == "key" && parent.computed === false) {
+    if (parent.type == "Property" && key == "key" && !nodeComputed(parent)) {
         return false;
     }
     if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") {
@@ -171,28 +257,30 @@ function isReferenceIdentifier(node: Loose, stack: Loose) {
     return true;
 }
 
-function renameFunctionExpressionSelfReferences(node: Loose, name: Loose) {
+function renameFunctionExpressionSelfReferences(node: AstNode, name: string): void {
     assert.equal(node.type, "FunctionExpression");
 
-    if (!node.id || !node.id.name || node.id.name == name) {
+    const id = childNode(node, "id");
+    const oldName = nodeName(id);
+    if (!oldName || oldName == name) {
         return;
     }
 
-    const oldName = node.id.name;
-    traverser.traverse(node.body, [], (child: Loose, stack: Loose) => {
-        if (child.type == "Identifier" && child.name == oldName && isReferenceIdentifier(child, stack)) {
-            child.name = name;
+    traverser.traverse(functionBody(node), [], (child: AstNode, stack: AstStackFrame[]) => {
+        if (child.type == "Identifier" && nodeName(child) == oldName && isReferenceIdentifier(child, stack)) {
+            setNodeName(child, name);
         }
         return child;
     });
 }
 
-function isClassMethodFunction(stack: Loose) {
-    return stack.some((frame: Loose) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+function isClassMethodFunction(stack: AstStackFrame[]): boolean {
+    return stack.some((frame: AstStackFrame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
 }
 
-function isNumericVmInternalFunction(node: Loose, stack: Loose) {
-    return node.toildefender$numericVmInternal === true || stack.some((frame: Loose) => frame.node && frame.node.toildefender$numericVmInternal === true);
+function isNumericVmInternalFunction(node: AstNode, stack: AstStackFrame[]): boolean {
+    return nodeFlag(node, "toildefender$numericVmInternal")
+        || stack.some((frame: AstStackFrame) => nodeFlag(frame.node, "toildefender$numericVmInternal"));
 }
 
 /**
@@ -201,14 +289,15 @@ function isNumericVmInternalFunction(node: Loose, stack: Loose) {
  * @param {Identifier} identifier} Argument identifier
  * @returns {number} Index of argument
  */
-function getArgumentIndex(method: Loose, identifier: Loose) {
+function getArgumentIndex(method: AstNode, identifier: AstNode): number {
     assert.ok(estest.isFunction(method));
     assert.equal(identifier.type, "Identifier");
     
-    return _.findIndex(method.params, (x: Loose) => x.name == identifier.name);
+    const name = nodeName(identifier);
+    return nodeParams(method).findIndex((param: AstNode) => nodeName(param) == name);
 }
 
-function rawArgumentsIdentifier() {
+function rawArgumentsIdentifier(): AstNode {
     return {
         type: "Identifier",
         name: "arguments",
@@ -216,10 +305,19 @@ function rawArgumentsIdentifier() {
     };
 }
 
-export default class Methods {
-    logger: Loose;
+function acquiredReferences(scopeManager: unknown, method: AstNode): MethodReference[] {
+    const manager = scopeManager as Partial<MethodScopeManager>;
+    if (typeof manager.acquire != "function") {
+        return [];
+    }
+    const scope = manager.acquire(method);
+    return scope ? scope.references : [];
+}
 
-    constructor (logger: Loose) {
+export default class Methods {
+    logger: LoggerLike;
+
+    constructor (logger: LoggerLike) {
         this.logger = logger;
     }
     
@@ -227,11 +325,11 @@ export default class Methods {
      * Adds helper methods to the beginning of the app.
      * @param {Node} Root node
      */
-    addCustomBind (ast: Loose) {
+    addCustomBind (ast: AstNode): void {
         assert.ok(estest.isNode(ast));
         
-        const code = esprima.parseScript(METHODS_INJECT) as Loose;
-        ast.body.splice.apply(ast.body, [0, 0].concat(code.body));
+        const code = esprima.parseScript(METHODS_INJECT) as unknown as AstNode;
+        mutableBody(ast).splice(0, 0, ...mutableBody(code));
     }
     
     /**
@@ -240,14 +338,12 @@ export default class Methods {
      * @param {ScopeManager} scopeManager
      * @returns {boolean}
      */
-    methodRefersToArguments (method: Loose, scopeManager: Loose) {
+    methodRefersToArguments (method: AstNode, scopeManager: unknown): boolean {
         assert.ok(estest.isFunction(method));
         assert.ok(scopeManager);
         
-        return scopeManager
-        .acquire(method)
-        .references
-        .some((reference: Loose) => !utils.isResolvedReference(reference) && reference.identifier.name == "arguments");
+        return acquiredReferences(scopeManager, method)
+        .some((reference: MethodReference) => !utils.isResolvedReference(reference) && nodeName(reference.identifier) == "arguments");
     }
     
     /**
@@ -258,11 +354,11 @@ export default class Methods {
      * @param {Function} method
      * @param {number} num Number of arguments to be sliced off. 0 if none.
      */
-    removeFirstArguments (method: Loose, num: Loose) {
+    removeFirstArguments (method: AstNode, num: number): void {
         assert.ok(estest.isFunction(method));
         assert.equal(typeof num, "number");
         
-        method.body.body.splice(0, 0, {
+        mutableBody(functionBody(method)).splice(0, 0, {
             type: "VariableDeclaration",
             kind: "var",
             declarations: [
@@ -294,12 +390,12 @@ export default class Methods {
      * @param {Node} ast Root node
      * @returns {string[]} Method names
      */
-    listMethods (ast: Loose) {
+    listMethods (ast: AstNode): string[] {
         assert.ok(estest.isNode(ast));
         
-        const methods: Loose[] = [];
+        const methods: string[] = [];
         
-        traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isNumericVmInternalFunction(node, stack)) {
                 return node;
             }
@@ -320,27 +416,28 @@ export default class Methods {
      * @param {Node} ast Root node
      * @returns {Function[]}
      */
-    extractMethods (ast: Loose) {
+    extractMethods (ast: AstNode): AstNode[] {
         assert.ok(estest.isNode(ast));
         
-        const methods: Loose[] = [];
+        const methods: AstNode[] = [];
         
-        traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isNumericVmInternalFunction(node, stack)) {
                 return node;
             }
             if (node.type == "FunctionDeclaration") { // Statement
                 functionDeclarationName(node);
                 methods.push(node);
-                return { type: "ExpressionStatement", expression: createMethodStub(node.id) }; // This is not ideal
+                return { type: "ExpressionStatement", expression: createMethodStub(childNode(node, "id") || { type: "Identifier", name: functionDeclarationName(node) }) }; // This is not ideal
             } else if (node.type == "FunctionExpression" && !isClassMethodFunction(stack)) { // Expression
                 const id = anonymousMethodName(node);
                 renameFunctionExpressionSelfReferences(node, id);
                 // Merge into old object instead of creating a new one to preserve object references
-                methods.push(_.assign(node, {
+                Object.assign(node, {
                     type: "FunctionDeclaration",
                     id: { type: "Identifier", name: id }
-                }));
+                });
+                methods.push(node);
                 return createMethodStub({ type: "Identifier", name: id });
             }
             
@@ -359,13 +456,13 @@ export default class Methods {
      * @param {boolean} useReassignedVariable Use toildefender$arguments instead of arguments
      * @returns {Function} Function from method parameter
      */
-    replaceArgumentReferences (method: Loose, useReassignedVariable: Loose) {
+    replaceArgumentReferences (method: AstNode, useReassignedVariable: boolean): AstNode {
         assert.ok(estest.isFunction(method));
         
-        traverser.traverse(method.body, [], (node: Loose, stack: Loose) => {
+        traverser.traverse(functionBody(method), [], (node: AstNode, stack: AstStackFrame[]) => {
             if (node.type == "Identifier") {
-                const nestedFunction = stack.some((frame: Loose) => estest.isFunction(frame.node));
-                if (useReassignedVariable && node.name == "arguments" && !node.toildefender$rawArguments && !nestedFunction) {
+                const nestedFunction = stack.some((frame: AstStackFrame) => estest.isFunction(frame.node));
+                if (useReassignedVariable && nodeName(node) == "arguments" && !nodeFlag(node, "toildefender$rawArguments") && !nestedFunction) {
                     return { type: "Identifier", name: "toildefender$bareArguments" };
                 }
                 const index = getArgumentIndex(method, node);
@@ -382,7 +479,7 @@ export default class Methods {
             return node;
         });
         
-        method.params = [];
+        setNodeParams(method, []);
         
         return method;
     }
@@ -396,22 +493,24 @@ export default class Methods {
      * @param {Object[]} methodEntryExitPoints Method entry point table
      * @param {number} methodEntryExitPoints[].entry Entry point
      */
-    replaceFunctionCalls (ast: Loose, methodEntryExitPoints: Loose) {
+    replaceFunctionCalls (ast: AstNode, methodEntryExitPoints: Record<string, MethodEntryPoint>): void {
         assert.ok(estest.isNode(ast));
         assert.equal(typeof methodEntryExitPoints, "object");
         
-        traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isNumericVmInternalFunction(node, stack)) {
                 return node;
             }
-            if (node.type == "Identifier" && methodEntryExitPoints[node.name] && methodEntryExitPoints[node.name].entry) {
-                const dispatcher = methodEntryExitPoints[node.name].dispatcher || "main";
+            const name = nodeName(node);
+            const entryPoint = name ? methodEntryExitPoints[name] : undefined;
+            if (node.type == "Identifier" && entryPoint?.entry) {
+                const dispatcher = entryPoint.dispatcher || "main";
                 return {
                     type: "CallExpression",
                     callee: { type: "Identifier", name: "toildefender$bind" },
                     arguments: [
                         { type: "Identifier", name: dispatcher },
-                        { type: "Identifier", name: methodEntryExitPoints[node.name].entry }
+                        { type: "Identifier", name: entryPoint.entry }
                     ]
                 };
             }
@@ -427,16 +526,24 @@ export default class Methods {
      * @param {Function} method Function whose body will be transformed
      * @param {number} inc Number to be added to all argument indices
      */
-    bumpArgumentsIndices (method: Loose, inc: Loose) {
+    bumpArgumentsIndices (method: AstNode, inc: number): void {
         assert.ok(estest.isFunction(method));
         assert.equal(typeof inc, "number");
         
-        traverser.traverse(method.body, [], (node: Loose, stack: Loose) => {
-            if (node.type == "MemberExpression" && node.object.type == "Identifier" && node.object.name == "toildefender$arguments") {
-                node.property.value += inc;
+        traverser.traverse(functionBody(method), [], (node: AstNode) => {
+            const object = childNode(node, "object");
+            if (node.type == "MemberExpression" && object?.type == "Identifier" && nodeName(object) == "toildefender$arguments") {
+                const property = childNode(node, "property");
+                const value = property ? nodeValue(property) : null;
+                if (typeof value == "number" && property) {
+                    setNodeValue(property, value + inc);
+                }
             }
-            if (node.toildefender$removeFirstArguments) {
-                node.value += inc;
+            if (nodeFlag(node, "toildefender$removeFirstArguments")) {
+                const value = nodeValue(node);
+                if (typeof value == "number") {
+                    setNodeValue(node, value + inc);
+                }
             }
             return node;
         });

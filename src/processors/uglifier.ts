@@ -3,7 +3,7 @@ import esshorten from "esshorten";
 import escope from "escope";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
 
 const RESERVED_WORDS = new Set([
     "await",
@@ -51,11 +51,49 @@ const RESERVED_WORDS = new Set([
 const FIRST_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
 const REST_CHARS = FIRST_CHARS + "0123456789";
 
-function containsModernBindings(ast: Loose) {
+interface ScopeReference {
+    identifier: AstNode;
+    resolved?: unknown;
+}
+
+interface ScopeVariable {
+    defs?: Array<{ type?: string }>;
+    identifiers: AstNode[];
+    name: string;
+    references: ScopeReference[];
+    tainted?: boolean;
+}
+
+interface MangleScope {
+    through: ScopeReference[];
+    type?: string;
+    variables: ScopeVariable[];
+}
+
+interface MangleScopeManager {
+    scopes: MangleScope[];
+}
+
+interface VariableEntry {
+    scope: MangleScope;
+    variable: ScopeVariable;
+}
+
+function nodeKind(node: AstNode): string | undefined {
+    const kind = (node as { kind?: unknown }).kind;
+    return typeof kind == "string" ? kind : undefined;
+}
+
+function nodeName(node: AstNode | undefined): string | undefined {
+    const name = (node as { name?: unknown } | undefined)?.name;
+    return typeof name == "string" ? name : undefined;
+}
+
+function containsModernBindings(ast: AstNode): boolean {
     let found = false;
-    traverser.traverseEx(ast, [], function (this: { abort(): void }, node: Loose) {
+    traverser.traverseEx(ast, [], function (this: { abort(): void }, node: AstNode) {
         if (
-            (node.type == "VariableDeclaration" && node.kind != "var")
+            (node.type == "VariableDeclaration" && nodeKind(node) != "var")
             || node.type == "ClassDeclaration"
             || node.type == "ClassExpression"
         ) {
@@ -67,36 +105,36 @@ function containsModernBindings(ast: Loose) {
     return found;
 }
 
-function shortName(index: Loose) {
-    let name = FIRST_CHARS[index % FIRST_CHARS.length];
+function shortName(index: number): string {
+    let name = FIRST_CHARS[index % FIRST_CHARS.length] || "";
     index = Math.floor(index / FIRST_CHARS.length);
     while (index > 0) {
         index -= 1;
-        name += REST_CHARS[index % REST_CHARS.length];
+        name += REST_CHARS[index % REST_CHARS.length] || "";
         index = Math.floor(index / REST_CHARS.length);
     }
     return name;
 }
 
-function collectUnresolvedNames(scopeManager: Loose) {
-    const names = new Set();
-    scopeManager.scopes.forEach((scope: Loose) => {
-        scope.through.forEach((reference: Loose) => {
-            if (!reference.resolved) {
-                names.add(reference.identifier.name);
+function collectUnresolvedNames(scopeManager: MangleScopeManager): Set<string> {
+    const names = new Set<string>();
+    scopeManager.scopes.forEach((scope: MangleScope) => {
+        scope.through.forEach((reference: ScopeReference) => {
+            const name = nodeName(reference.identifier);
+            if (!reference.resolved && name) {
+                names.add(name);
             }
         });
     });
     return names;
 }
 
-function isRenamableVariable(scope: Loose, variable: Loose, unresolvedNames: Loose) {
+function isRenamableVariable(scope: MangleScope, variable: ScopeVariable, unresolvedNames: Set<string>): boolean {
     if (scope.type == "global") {
         return false;
     }
     if (
-        typeof variable.name == "string"
-        && variable.name.indexOf("toildefender$anon$") === 0
+        variable.name.indexOf("toildefender$anon$") === 0
         && unresolvedNames.has(variable.name)
     ) {
         return false;
@@ -107,35 +145,36 @@ function isRenamableVariable(scope: Loose, variable: Loose, unresolvedNames: Loo
     if (variable.tainted) {
         return false;
     }
-    if (!variable.identifiers || variable.identifiers.length == 0) {
+    if (variable.identifiers.length == 0) {
         return false;
     }
-    if (variable.defs && variable.defs.some((def: Loose) => def.type == "ClassName")) {
+    if (variable.defs?.some((def) => def.type == "ClassName")) {
         return false;
     }
     return true;
 }
 
-function reserveUnrenamedNames(scopeManager: Loose, renamable: Loose) {
+function reserveUnrenamedNames(scopeManager: MangleScopeManager, renamable: Set<ScopeVariable>): Set<string> {
     const reserved = new Set(RESERVED_WORDS);
-    scopeManager.scopes.forEach((scope: Loose) => {
-        scope.variables.forEach((variable: Loose) => {
+    scopeManager.scopes.forEach((scope: MangleScope) => {
+        scope.variables.forEach((variable: ScopeVariable) => {
             if (!renamable.has(variable)) {
                 reserved.add(variable.name);
             }
         });
-        scope.through.forEach((reference: Loose) => {
-            if (!reference.resolved) {
-                reserved.add(reference.identifier.name);
+        scope.through.forEach((reference: ScopeReference) => {
+            const name = nodeName(reference.identifier);
+            if (!reference.resolved && name) {
+                reserved.add(name);
             }
         });
     });
     return reserved;
 }
 
-function buildParentMap(ast: Loose) {
-    const parents = new WeakMap();
-    traverser.traverse(ast, [], function (node: Loose, stack: Loose) {
+function buildParentMap(ast: AstNode): WeakMap<AstNode, AstNode> {
+    const parents = new WeakMap<AstNode, AstNode>();
+    traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
         const parentFrame = stack[1];
         if (parentFrame) {
             parents.set(node, parentFrame.node);
@@ -145,60 +184,63 @@ function buildParentMap(ast: Loose) {
     return parents;
 }
 
-function renameIdentifier(identifier: Loose, name: Loose, parents: Loose) {
+function renameIdentifier(identifier: AstNode, name: string, parents: WeakMap<AstNode, AstNode>): void {
     const parent = parents.get(identifier);
+    const parentFields = parent as { key?: unknown; shorthand?: unknown; value?: unknown } | undefined;
     if (
         parent
         && parent.type == "Property"
-        && parent.shorthand === true
-        && (parent.key === identifier || parent.value === identifier)
+        && parentFields?.shorthand === true
+        && (parentFields.key === identifier || parentFields.value === identifier)
     ) {
-        parent.shorthand = false;
-        parent.key = {
+        parentFields.shorthand = false;
+        const key: AstNode = {
             type: "Identifier",
-            name: identifier.name
+            name: nodeName(identifier) || ""
         };
-        parent.value = {
+        const value: AstNode = {
             type: "Identifier",
-            name: name
+            name
         };
-        parents.set(parent.key, parent);
-        parents.set(parent.value, parent);
+        parentFields.key = key;
+        parentFields.value = value;
+        parents.set(key, parent);
+        parents.set(value, parent);
         return;
     }
 
-    identifier.name = name;
+    (identifier as { name?: string }).name = name;
 }
 
-function modernMangle(ast: Loose) {
+function modernMangle(ast: AstNode): AstNode {
     const scopeManager = escope.analyze(ast, {
         ecmaVersion: 6,
         optimistic: true,
         sourceType: "script"
-    });
+    }) as unknown as MangleScopeManager;
 
     const unresolvedNames = collectUnresolvedNames(scopeManager);
-    const variables: Loose[] = [];
-    scopeManager.scopes.forEach((scope: Loose) => {
-        scope.variables.forEach((variable: Loose) => {
+    const variables: VariableEntry[] = [];
+    scopeManager.scopes.forEach((scope: MangleScope) => {
+        scope.variables.forEach((variable: ScopeVariable) => {
             if (isRenamableVariable(scope, variable, unresolvedNames)) {
-                variables.push({ scope: scope, variable: variable });
+                variables.push({ scope, variable });
             }
         });
     });
 
-    variables.sort((left: Loose, right: Loose) => {
+    variables.sort((left: VariableEntry, right: VariableEntry) => {
         const leftWeight = left.variable.references.length + left.variable.identifiers.length;
         const rightWeight = right.variable.references.length + right.variable.identifiers.length;
         return rightWeight - leftWeight;
     });
 
-    const renamable = new Set(variables.map((entry: Loose) => entry.variable));
+    const renamable = new Set(variables.map((entry: VariableEntry) => entry.variable));
     const used = reserveUnrenamedNames(scopeManager, renamable);
     const parents = buildParentMap(ast);
     let next = 0;
 
-    variables.forEach((entry: Loose) => {
+    variables.forEach((entry: VariableEntry) => {
         let name: string;
         do {
             name = shortName(next);
@@ -206,10 +248,10 @@ function modernMangle(ast: Loose) {
         } while (used.has(name) || RESERVED_WORDS.has(name));
         used.add(name);
 
-        entry.variable.identifiers.forEach((identifier: Loose) => {
+        entry.variable.identifiers.forEach((identifier: AstNode) => {
             renameIdentifier(identifier, name, parents);
         });
-        entry.variable.references.forEach((reference: Loose) => {
+        entry.variable.references.forEach((reference: ScopeReference) => {
             renameIdentifier(reference.identifier, name, parents);
         });
     });
@@ -218,9 +260,9 @@ function modernMangle(ast: Loose) {
 }
 
 export default class Uglifier {
-    logger: Loose;
+    logger: LoggerLike;
 
-    constructor (logger: Loose) {
+    constructor (logger: LoggerLike) {
         this.logger = logger;
     }
 
@@ -229,7 +271,7 @@ export default class Uglifier {
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    uglify (ast: Loose) {
+    uglify (ast: AstNode): AstNode {
         assert.ok(estest.isNode(ast));
 
         if (containsModernBindings(ast)) {

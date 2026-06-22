@@ -1,45 +1,100 @@
 import assert from "assert";
-import _ from "lodash";
 import estest from "../estest.js";
 import ESUtils from "../esutils.js";
 import traverser from "../traverser.js";
 import utils from "../utils.js";
-import type { Loose } from "../types.js";
+import type { AstNode, AstStackFrame, LoggerLike, ScopeLike } from "../types.js";
 
-function isClassMethodFunction(stack: Loose) {
-    return stack.some((frame: Loose) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+interface ScopeReference {
+    identifier: AstNode;
+    resolved?: ScopeVariable | null;
 }
 
-function isClassMethodScope(scope: Loose) {
-    let node = scope && scope.block;
-    while (node) {
-        if (node.type == "MethodDefinition" || node.type == "ClassBody") {
-            return true;
-        }
-        node = node.toildefender$parent;
+interface ScopeDef {
+    name?: AstNode;
+    node: AstNode;
+    parent: AstNode;
+    type: string;
+}
+
+interface ScopeVariable {
+    defs: ScopeDef[];
+    name: string;
+    references: ScopeReference[];
+}
+
+interface ScopeObject extends ScopeLike {
+    references: ScopeReference[];
+    through: ScopeReference[];
+    type?: string;
+    variables: ScopeVariable[];
+}
+
+interface ScopeManagerObject {
+    acquireAll?: (node: AstNode) => ScopeObject[];
+    scopes: ScopeObject[];
+}
+
+interface ScopeOptions {
+    forceProgram?: boolean;
+    ratio?: unknown;
+    seed?: string;
+}
+
+interface FallbackReplacement {
+    block: AstNode;
+    replacement: AstNode;
+    scopeDecl: AstNode;
+}
+
+function nodeFields(node: AstNode): Record<string, unknown> {
+    return node as unknown as Record<string, unknown>;
+}
+
+function nodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function childNode(node: AstNode, key: string): AstNode | null {
+    const value = nodeFields(node)[key];
+    return estest.isNode(value) ? value : null;
+}
+
+function setNodeField(node: AstNode, key: string, value: unknown): void {
+    nodeFields(node)[key] = value;
+}
+
+function nodeName(node: AstNode | null): string | null {
+    const name = (node as { name?: unknown } | null)?.name;
+    return typeof name == "string" ? name : null;
+}
+
+function nodeComputed(node: AstNode): boolean {
+    return (node as { computed?: unknown }).computed === true;
+}
+
+function nodeFlag(node: AstNode, key: "shorthand" | "toildefender$numericVmInternal"): boolean {
+    return (node as Record<string, unknown>)[key] === true;
+}
+
+function nodeParams(node: AstNode): AstNode[] {
+    return nodeArray(nodeFields(node).params);
+}
+
+function parentOf(node: AstNode | null): AstNode | null {
+    const parent = (node as { toildefender$parent?: unknown } | null)?.toildefender$parent;
+    return estest.isNode(parent) ? parent : null;
+}
+
+function scopeManagerObject(scopeManager: unknown): ScopeManagerObject {
+    const manager = scopeManager as Partial<ScopeManagerObject>;
+    if (Array.isArray(manager.scopes)) {
+        return manager as ScopeManagerObject;
     }
-    return false;
+    return { scopes: [] };
 }
 
-function isNumericVmInternalNode(node: Loose) {
-    while (node) {
-        if (node.toildefender$numericVmInternal === true) {
-            return true;
-        }
-        node = node.toildefender$parent;
-    }
-    return false;
-}
-
-function isNumericVmInternalFunction(stack: Loose) {
-    return stack.some((frame: Loose) => frame.node && isNumericVmInternalNode(frame.node));
-}
-
-function isNumericVmInternalScope(scope: Loose) {
-    return isNumericVmInternalNode(scope && scope.block);
-}
-
-function scopeReference(scopeVarName: Loose, index: Loose) {
+function scopeReference(scopeVarName: string, index: number): AstNode {
     return {
         type: "MemberExpression",
         object: { type: "Identifier", name: scopeVarName },
@@ -49,7 +104,40 @@ function scopeReference(scopeVarName: Loose, index: Loose) {
     };
 }
 
-function isReferenceIdentifier(node: Loose, stack: Loose) {
+function isClassMethodFunction(stack: AstStackFrame[]): boolean {
+    return stack.some((frame: AstStackFrame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+}
+
+function isClassMethodScope(scope: ScopeObject): boolean {
+    let node: AstNode | null = scope.block;
+    while (node) {
+        if (node.type == "MethodDefinition" || node.type == "ClassBody") {
+            return true;
+        }
+        node = parentOf(node);
+    }
+    return false;
+}
+
+function isNumericVmInternalNode(node: AstNode | null): boolean {
+    while (node) {
+        if (nodeFlag(node, "toildefender$numericVmInternal")) {
+            return true;
+        }
+        node = parentOf(node);
+    }
+    return false;
+}
+
+function isNumericVmInternalFunction(stack: AstStackFrame[]): boolean {
+    return stack.some((frame: AstStackFrame) => isNumericVmInternalNode(frame.node));
+}
+
+function isNumericVmInternalScope(scope: ScopeObject): boolean {
+    return isNumericVmInternalNode(scope.block);
+}
+
+function isReferenceIdentifier(node: AstNode, stack: AstStackFrame[]): boolean {
     const parentFrame = stack[1];
     if (!parentFrame) {
         return true;
@@ -70,13 +158,13 @@ function isReferenceIdentifier(node: Loose, stack: Loose) {
     if (parent.type == "CatchClause" && key == "param") {
         return false;
     }
-    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) {
+    if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && !nodeComputed(parent)) {
         return false;
     }
-    if (parent.type == "Property" && key == "key" && parent.computed === false) {
+    if (parent.type == "Property" && key == "key" && !nodeComputed(parent)) {
         return false;
     }
-    if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && parent.computed === false) {
+    if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && !nodeComputed(parent)) {
         return false;
     }
     if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") {
@@ -86,12 +174,12 @@ function isReferenceIdentifier(node: Loose, stack: Loose) {
     return true;
 }
 
-function isInsideNestedScope(stack: Loose, root: Loose, scopeBlocks: Loose) {
-    return stack.some((frame: Loose) => frame.node != root && scopeBlocks.has(frame.node));
+function isInsideNestedScope(stack: AstStackFrame[], root: AstNode, scopeBlocks: WeakSet<AstNode>): boolean {
+    return stack.some((frame: AstStackFrame) => frame.node != root && scopeBlocks.has(frame.node));
 }
 
-function isMovableVariable(variable: Loose) {
-    return variable.defs.some((def: Loose) => {
+function isMovableVariable(variable: ScopeVariable): boolean {
+    return variable.defs.some((def: ScopeDef) => {
         if (isNumericVmInternalNode(def.node)) {
             return false;
         }
@@ -102,29 +190,29 @@ function isMovableVariable(variable: Loose) {
     });
 }
 
-function markPropertyValueReplacement(stack: Loose) {
+function markPropertyValueReplacement(stack: AstStackFrame[]): void {
     const parentFrame = stack[1];
     if (!parentFrame) {
         return;
     }
     const parent = parentFrame.node;
-    if (parent.type == "Property" && parent.shorthand === true && parentFrame.key == "value") {
-        parent.shorthand = false;
+    if (parent.type == "Property" && nodeFlag(parent, "shorthand") && parentFrame.key == "value") {
+        setNodeField(parent, "shorthand", false);
     }
 }
 
-function isReferenceInsideNestedFunction(scopeBlock: Loose, identifier: Loose) {
-    let current = identifier && identifier.toildefender$parent;
+function isReferenceInsideNestedFunction(scopeBlock: AstNode, identifier: AstNode): boolean {
+    let current = parentOf(identifier);
     while (current && current != scopeBlock) {
         if (estest.isFunction(current)) {
             return true;
         }
-        current = current.toildefender$parent;
+        current = parentOf(current);
     }
     return false;
 }
 
-function normalizeRatio(value: Loose) {
+function normalizeRatio(value: unknown): number {
     const ratio = Number(value);
     if (!Number.isFinite(ratio)) {
         return 1;
@@ -138,7 +226,7 @@ function normalizeRatio(value: Loose) {
     return ratio;
 }
 
-function hashString32(value: Loose) {
+function hashString32(value: string): number {
     let h = 0x811c9dc5;
     for (let i = 0; i < value.length; i += 1) {
         h ^= value.charCodeAt(i);
@@ -147,11 +235,37 @@ function hashString32(value: Loose) {
     return h >>> 0;
 }
 
-export default class Scopes {
-    logger: Loose;
-    esutils: Loose;
+function cloneReplacement(node: AstNode | undefined): AstNode {
+    assert.ok(node);
+    return utils.cloneISwearIKnowWhatImDoing(node);
+}
 
-    constructor (logger: Loose) {
+function ancestorDistance(ancestor: AstNode, node: AstNode): number {
+    let distance = 0;
+    let current: AstNode | null = node;
+    while (current) {
+        if (current == ancestor) {
+            return distance;
+        }
+        current = parentOf(current);
+        distance += 1;
+    }
+    return -1;
+}
+
+function variableIndex(indexes: Map<ScopeVariable, number>, variable: ScopeVariable): number {
+    const index = indexes.get(variable);
+    if (typeof index != "number") {
+        throw new Error(`Missing scope index for ${variable.name}`);
+    }
+    return index;
+}
+
+export default class Scopes {
+    logger: LoggerLike;
+    esutils: ESUtils;
+
+    constructor (logger: LoggerLike) {
         this.logger = logger;
         this.esutils = new ESUtils(logger);
     }
@@ -166,31 +280,26 @@ export default class Scopes {
      * @param {Node} ast Root node
      * @param {ScopeManager} scopeManager Scope manager
      */
-    createScopeObjects (ast: Loose, scopeManager: Loose, options: Loose) {
+    createScopeObjects (ast: AstNode, scopeManager: unknown, options: ScopeOptions = {}): void {
         assert.ok(estest.isNode(ast));
         
         this.esutils.setParentsRecursive(ast);
-        options = options || {};
         const ratio = normalizeRatio(options.ratio);
         const seed = options.seed || "toildefender-scope";
         const forceProgram = options.forceProgram === true;
-        const scopes = scopeManager.acquireAll(ast);
+        const manager = scopeManagerObject(scopeManager);
+        const scopes = typeof manager.acquireAll == "function" ? manager.acquireAll(ast) : manager.scopes;
         const rngAlpha = new utils.UniqueRandomAlpha(3);
-        const replacements = new WeakMap();
-        const referencesByVariable = new Map();
-        const fallbackReplacementsByName = new Map();
-        const scopeBlocks = new WeakSet();
-        scopes.forEach((scope: Loose) => {
-            if (scope && scope.block) {
-                scopeBlocks.add(scope.block);
-            }
+        const replacements = new WeakMap<AstNode, AstNode>();
+        const referencesByVariable = new Map<ScopeVariable, Set<ScopeReference>>();
+        const fallbackReplacementsByName = new Map<string, FallbackReplacement[]>();
+        const scopeBlocks = new WeakSet<AstNode>();
+
+        scopes.forEach((scope: ScopeObject) => {
+            scopeBlocks.add(scope.block);
         });
 
-        function cloneReplacement(node: Loose) {
-            return utils.cloneISwearIKnowWhatImDoing(node);
-        }
-
-        function addFallbackReplacement(name: Loose, replacement: Loose, block: Loose, scopeDecl: Loose) {
+        const addFallbackReplacement = (name: string, replacement: AstNode, block: AstNode, scopeDecl: AstNode): void => {
             let entries = fallbackReplacementsByName.get(name);
             if (!entries) {
                 entries = [];
@@ -201,31 +310,18 @@ export default class Scopes {
                 scopeDecl: scopeDecl,
                 replacement: replacement
             });
-        }
+        };
 
-        function ancestorDistance(ancestor: Loose, node: Loose) {
-            let distance = 0;
-            let current = node;
-            while (current) {
-                if (current == ancestor) {
-                    return distance;
-                }
-                current = current.toildefender$parent;
-                distance += 1;
-            }
-            return -1;
-        }
-
-        function fallbackReplacementForName(name: Loose, node: Loose) {
+        const fallbackReplacementForName = (name: string, node: AstNode): AstNode | null => {
             const entries = fallbackReplacementsByName.get(name);
             if (!entries) {
                 return null;
             }
 
-            let best = null;
+            let best: AstNode | null = null;
             let bestDistance = Infinity;
-            entries.forEach((entry: Loose) => {
-                const liveBlock = entry.scopeDecl && entry.scopeDecl.toildefender$parent;
+            entries.forEach((entry: FallbackReplacement) => {
+                const liveBlock = parentOf(entry.scopeDecl);
                 let distance = liveBlock ? ancestorDistance(liveBlock, node) : -1;
                 if (distance < 0) {
                     distance = ancestorDistance(entry.block, node);
@@ -235,14 +331,11 @@ export default class Scopes {
                     bestDistance = distance;
                 }
             });
-            if (best) {
-                return best;
-            }
-            return null;
-        }
+            return best;
+        };
 
-        function addResolvedReference(variable: Loose, reference: Loose) {
-            if (!variable || !reference || !reference.identifier) {
+        const addResolvedReference = (variable: ScopeVariable | null | undefined, reference: ScopeReference): void => {
+            if (!variable) {
                 return;
             }
             let references = referencesByVariable.get(variable);
@@ -251,33 +344,33 @@ export default class Scopes {
                 referencesByVariable.set(variable, references);
             }
             references.add(reference);
-        }
+        };
 
-        scopeManager.scopes.forEach((scope: Loose) => {
-            scope.variables.forEach((variable: Loose) => {
-                variable.references.forEach((reference: Loose) => addResolvedReference(variable, reference));
+        manager.scopes.forEach((scope: ScopeObject) => {
+            scope.variables.forEach((variable: ScopeVariable) => {
+                variable.references.forEach((reference: ScopeReference) => addResolvedReference(variable, reference));
             });
 
-            scope.references.forEach((reference: Loose) => {
+            scope.references.forEach((reference: ScopeReference) => {
                 addResolvedReference(reference.resolved, reference);
             });
 
-            scope.through.forEach((reference: Loose) => {
+            scope.through.forEach((reference: ScopeReference) => {
                 addResolvedReference(reference.resolved, reference);
             });
         });
 
-        function referencesFor(variable: Loose) {
-            let references = referencesByVariable.get(variable);
-            references = references ? Array.from(references) : variable.references;
-            return references.filter((reference: Loose) => reference.resolved === variable);
-        }
+        const referencesFor = (variable: ScopeVariable): ScopeReference[] => {
+            const references = referencesByVariable.get(variable);
+            const list = references ? Array.from(references) : variable.references;
+            return list.filter((reference: ScopeReference) => reference.resolved === variable);
+        };
 
-        function shouldFlattenScope(scope: Loose, movableVariables: Loose, index: Loose) {
-            if (forceProgram && scope && scope.block && scope.block.type == "Program") {
+        const shouldFlattenScope = (scope: ScopeObject, movableVariables: ScopeVariable[], index: number): boolean => {
+            if (forceProgram && scope.block.type == "Program") {
                 return true;
             }
-            if (movableVariables.some((variable: Loose) => referencesFor(variable).some((reference: Loose) => isReferenceInsideNestedFunction(scope.block, reference.identifier)))) {
+            if (movableVariables.some((variable: ScopeVariable) => referencesFor(variable).some((reference: ScopeReference) => isReferenceInsideNestedFunction(scope.block, reference.identifier)))) {
                 return true;
             }
             if (ratio >= 1) {
@@ -286,29 +379,26 @@ export default class Scopes {
             if (ratio <= 0) {
                 return false;
             }
-            const blockType = scope && scope.block && scope.block.type || "";
-            const variableNames = movableVariables.map((variable: Loose) => variable.name).sort().join(",");
-            const score = hashString32(`${seed}:${index}:${scope.type}:${blockType}:${variableNames}`) / 0x100000000;
+            const variableNames = movableVariables.map((variable: ScopeVariable) => variable.name).sort().join(",");
+            const score = hashString32(`${seed}:${index}:${scope.type || ""}:${scope.block.type}:${variableNames}`) / 0x100000000;
             return score < ratio;
-        }
+        };
 
-        function rewriteKnownReferences(node: Loose) {
-            if (!node) {
-                return node;
-            }
-            return traverser.traverse(node, [], (child: Loose, stack: Loose) => {
+        const rewriteKnownReferences = (node: AstNode): AstNode => {
+            return traverser.traverse(node, [], (child: AstNode, stack: AstStackFrame[]) => {
                 if (isNumericVmInternalFunction(stack)) {
                     return child;
                 }
-                if (child.type == "Identifier" && replacements.has(child)) {
+                const replacement = replacements.get(child);
+                if (child.type == "Identifier" && replacement) {
                     markPropertyValueReplacement(stack);
-                    return cloneReplacement(replacements.get(child));
+                    return cloneReplacement(replacement);
                 }
                 return child;
             });
-        }
+        };
 
-        scopeManager.scopes.forEach((scope: Loose, scopeIndex: Loose) => {
+        manager.scopes.forEach((scope: ScopeObject, scopeIndex: number) => {
             if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope) || isNumericVmInternalScope(scope)) {
                 return;
             }
@@ -322,32 +412,32 @@ export default class Scopes {
             const scopeVarName = `$$scope$${rngAlpha.get()}`;
             
             let counter = 0;
-            const indexes = new Map();
-            const localReplacementsByName = new Map();
-            movableVariables.forEach((variable: Loose) => {
+            const indexes = new Map<ScopeVariable, number>();
+            const localReplacementsByName = new Map<string, AstNode>();
+            movableVariables.forEach((variable: ScopeVariable) => {
                 indexes.set(variable, counter++);
             });
 
-            movableVariables.forEach((variable: Loose) => {
-                const index = indexes.get(variable);
-                variable.defs.forEach((def: Loose) => {
+            movableVariables.forEach((variable: ScopeVariable) => {
+                const index = variableIndex(indexes, variable);
+                variable.defs.forEach((def: ScopeDef) => {
                     if (def.type == "Variable") {
                         const replacement = scopeReference(scopeVarName, index);
                         localReplacementsByName.set(variable.name, replacement);
-                        referencesFor(variable).forEach((reference: Loose) => {
+                        referencesFor(variable).forEach((reference: ScopeReference) => {
                             replacements.set(reference.identifier, scopeReference(scopeVarName, index));
                         });
                     } else if (def.type == "CatchClause") {
-                        referencesFor(variable).forEach((reference: Loose) => {
+                        referencesFor(variable).forEach((reference: ScopeReference) => {
                             replacements.set(reference.identifier, scopeReference(scopeVarName, index));
                         });
                     } else if (def.type == "FunctionName" && def.node.type != "FunctionExpression") {
-                        referencesFor(variable).forEach((reference: Loose) => {
+                        referencesFor(variable).forEach((reference: ScopeReference) => {
                             replacements.set(reference.identifier, {
                                 type: "CallExpression",
                                 callee: { type: "Identifier", name: "toildefender$bind" },
                                 arguments: [
-                                    { type: "Identifier", name: reference.identifier.name },
+                                    { type: "Identifier", name: nodeName(reference.identifier) || variable.name },
                                     { type: "Identifier", name: scopeVarName }
                                 ]
                             });
@@ -356,9 +446,9 @@ export default class Scopes {
                 });
             });
 
-            const rewriteLocalReferencesByName = () => {
+            const rewriteLocalReferencesByName = (): void => {
                 this.esutils.setParentsRecursive(scope.block);
-                traverser.traverse(scope.block, [], (node: Loose, stack: Loose) => {
+                traverser.traverse(scope.block, [], (node: AstNode, stack: AstStackFrame[]) => {
                     if (isNumericVmInternalFunction(stack)) {
                         return node;
                     }
@@ -366,7 +456,7 @@ export default class Scopes {
                         return node;
                     }
                     if (node.type == "Identifier" && isReferenceIdentifier(node, stack)) {
-                        const replacement = localReplacementsByName.get(node.name);
+                        const replacement = localReplacementsByName.get(nodeName(node) || "");
                         if (replacement) {
                             markPropertyValueReplacement(stack);
                             return cloneReplacement(replacement);
@@ -376,7 +466,7 @@ export default class Scopes {
                 });
             };
 
-            const scopeDecl = {
+            const scopeDecl: AstNode = {
                 type: "VariableDeclaration",
                 kind: "var",
                 declarations: [
@@ -390,47 +480,44 @@ export default class Scopes {
             };
             
             this.esutils.insertIntoScope(scope, scopeDecl);
-            localReplacementsByName.forEach((replacement: Loose, name: Loose) => {
+            localReplacementsByName.forEach((replacement: AstNode, name: string) => {
                 addFallbackReplacement(name, replacement, scope.block, scopeDecl);
             });
             
-            movableVariables.forEach((variable: Loose) => {
-                const index = indexes.get(variable);
-                
-                variable.defs.forEach((def: Loose) => {
+            movableVariables.forEach((variable: ScopeVariable) => {
+                const index = variableIndex(indexes, variable);
+                variable.defs.forEach((def: ScopeDef) => {
                     if (def.type == "Variable") {
-                        assert(def.parent.type == "VariableDeclaration");
-                        def.parent.declarations = def.parent.declarations.filter((x: Loose) => x != def.node);
-                        const replacement: Loose[] = [];
-                        if (def.node.init) {
+                        const parent = def.parent;
+                        assert(parent.type == "VariableDeclaration");
+                        const declarations = nodeArray(nodeFields(parent).declarations).filter((declarator: AstNode) => declarator != def.node);
+                        setNodeField(parent, "declarations", declarations);
+
+                        const replacement: AstNode[] = [];
+                        const init = childNode(def.node, "init");
+                        if (init) {
                             replacement.push({
                                 type: "ExpressionStatement",
                                 expression: {
                                     type: "AssignmentExpression",
                                     operator: "=",
-                                    left: {
-                                        type: "MemberExpression",
-                                        object: { type: "Identifier", name: scopeVarName },
-                                        property: { type: "Literal", value: index },
-                                        computed: true,
-                                        toildefender$scopeObjectReference: true
-                                    },
-                                    right: rewriteKnownReferences(def.node.init)
+                                    left: scopeReference(scopeVarName, index),
+                                    right: rewriteKnownReferences(init)
                                 }
                             });
                         }
-                        if (def.parent.declarations.length > 0) {
-                            replacement.push(def.parent);
+                        if (declarations.length > 0) {
+                            replacement.push(parent);
                         }
                         if (replacement.length == 0) {
-                            this.esutils.replaceNode(scope.block, def.parent, { type: "EmptyStatement" });
+                            this.esutils.replaceNode(scope.block, parent, { type: "EmptyStatement" });
                         } else if (replacement.length == 1) {
-                            this.esutils.replaceNode(scope.block, def.parent, replacement[0] );
+                            this.esutils.replaceNode(scope.block, parent, replacement[0]);
                         } else {
-                            this.esutils.replaceNode(scope.block, def.parent, { type: "BlockStatement", body: replacement });
+                            this.esutils.replaceNode(scope.block, parent, { type: "BlockStatement", body: replacement });
                         }
-                        referencesFor(variable).forEach((reference: Loose) => {
-                            // References can not be replaced via replaceNodeEx for whatever reason
+                        referencesFor(variable).forEach((reference: ScopeReference) => {
+                            // References can not be replaced via replaceNodeEx for whatever reason.
                             this.esutils.replaceNode(scope.block, reference.identifier, cloneReplacement(replacements.get(reference.identifier) || scopeReference(scopeVarName, index)));
                         });
                     } else if (def.type == "CatchClause") {
@@ -444,17 +531,17 @@ export default class Scopes {
                                 type: "AssignmentExpression",
                                 operator: "=",
                                 left: scopeReference(scopeVarName, index),
-                                right: def.name
+                                right: def.name || { type: "Identifier", name: variable.name }
                             }
                         }, 1);
-                        referencesFor(variable).forEach((reference: Loose) => {
+                        referencesFor(variable).forEach((reference: ScopeReference) => {
                             this.esutils.replaceNode(scope.block, reference.identifier, cloneReplacement(replacements.get(reference.identifier) || scopeReference(scopeVarName, index)));
                         });
                     } else if (def.type == "FunctionName") {
                         if (def.node.type == "FunctionExpression") {
                             return;
                         }
-                        referencesFor(variable).forEach((reference: Loose) => {
+                        referencesFor(variable).forEach((reference: ScopeReference) => {
                             this.esutils.replaceNode(scope.block, reference.identifier, cloneReplacement(replacements.get(reference.identifier)));
                         });
                     }
@@ -463,7 +550,7 @@ export default class Scopes {
 
             rewriteLocalReferencesByName();
             
-            traverser.traverse(scope.block, [], (node: Loose, stack: Loose) => {
+            traverser.traverse(scope.block, [], (node: AstNode, stack: AstStackFrame[]) => {
                 if (scope.block == node) {
                     return node;
                 }
@@ -473,7 +560,7 @@ export default class Scopes {
                 }
                 
                 if (node.type.indexOf("Function") == 0) {
-                    node.params.unshift({
+                    nodeParams(node).unshift({
                         type: "Identifier",
                         name: scopeVarName
                     });
@@ -495,17 +582,17 @@ export default class Scopes {
         });
 
         this.esutils.setParentsRecursive(ast);
-        traverser.traverse(ast, [], (node: Loose, stack: Loose) => {
+        traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             const parentFrame = stack[1];
             if (
                 node.type == "Identifier" &&
-                node.name.indexOf("$$var$") == 0 &&
+                (nodeName(node) || "").indexOf("$$var$") == 0 &&
                 parentFrame &&
                 parentFrame.node.type == "CallExpression" &&
                 parentFrame.key == "callee" &&
                 isReferenceIdentifier(node, stack)
             ) {
-                const replacement = fallbackReplacementForName(node.name, node);
+                const replacement = fallbackReplacementForName(nodeName(node) || "", node);
                 if (replacement) {
                     return cloneReplacement(replacement);
                 }
@@ -513,5 +600,4 @@ export default class Scopes {
             return node;
         });
     }
-
-};
+}

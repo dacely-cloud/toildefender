@@ -1,10 +1,11 @@
-import type { Loose } from "../types.js";
+import ESUtils from "../esutils.js";
+import type { AstNode, LoggerLike } from "../types.js";
 export default class Variables {
-    logger: Loose;
-    esutils: Loose;
-    constructor(logger: Loose);
-    removeFunctionExpressionIds(ast: Loose): import("../types.js").AstNode;
-    functionDeclarationToExpression(ast: Loose, scopeManager: Loose): void;
-    obfuscateIdentifiers(ast: Loose, scopeManager: Loose): void;
-    redefineParameters(ast: Loose, scopeManager: Loose): void;
+    logger: LoggerLike;
+    esutils: ESUtils;
+    constructor(logger: LoggerLike);
+    removeFunctionExpressionIds(ast: AstNode): AstNode;
+    functionDeclarationToExpression(ast: AstNode, scopeManager: unknown): void;
+    obfuscateIdentifiers(ast: AstNode, scopeManager: unknown): void;
+    redefineParameters(ast: AstNode, scopeManager: unknown): void;
 }

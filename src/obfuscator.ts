@@ -7,6 +7,7 @@ import path from "node:path";
 import * as modernParser from "@babel/parser";
 import _ from "lodash";
 import escodegen from "escodegen";
+import type { GenerateOptions } from "escodegen";
 import escope from "escope";
 import * as esprima from "esprima";
 import traverser from "./traverser.js";
@@ -31,12 +32,74 @@ import type {
     FeatureConfig,
     FeatureDescriptions,
     FeatureName,
+    HashMeshOptions,
     LogAdapter,
     LogLevel,
-    Loose,
+    NumericVmOptions,
+    ProtectionOptions,
     ToilDefenderOptions,
     ToilDefenderResult
 } from "./types.js";
+
+type InternalFeatureName = FeatureName | "health";
+type InternalFeatureConfig = Partial<Record<InternalFeatureName, boolean>>;
+type PreprocessorDefines = NonNullable<ToilDefenderOptions["preprocessorVariables"]>;
+type DispatcherName = "main$asyncGenerator" | "main$async" | "main$generator" | "main";
+type AsyncDispatcherName = Exclude<DispatcherName, "main">;
+
+interface MethodEntryPoint {
+    dispatcher?: DispatcherName;
+    entry: number;
+}
+
+interface DispatcherGroup {
+    async?: boolean;
+    fns: AstNode[];
+    generator?: boolean;
+}
+
+interface ResolvedProtectionOptions {
+    virtualMachine: NumericVmOptions & NonNullable<ProtectionOptions["virtualMachine"]>;
+    hashMesh: HashMeshOptions;
+}
+
+interface ResolvedToilDefenderOptions extends Omit<Required<ToilDefenderOptions>, "features" | "forceFeatures" | "logAdapter" | "modulesCode" | "preprocessorVariables" | "protections"> {
+    features: InternalFeatureConfig;
+    forceFeatures?: InternalFeatureConfig;
+    logAdapter?: LogAdapter;
+    modulesCode: Record<string, string>;
+    preprocessorVariables: PreprocessorDefines;
+    protections: ResolvedProtectionOptions;
+}
+
+interface BabelTransformResult {
+    code?: string | null;
+}
+
+interface BabelTransformer {
+    transform(code: string, options: Record<string, unknown>): BabelTransformResult;
+}
+
+interface ModernBabelTransformer {
+    transformSync(code: string, options: Record<string, unknown>): BabelTransformResult | null;
+}
+
+interface BabelPresetEnvOptions {
+    exclude?: string[];
+    modules: "commonjs";
+    targets?: string;
+    useBuiltIns: false;
+}
+
+interface TaskAlternative {
+    otherwise(task?: () => void): void;
+}
+
+type DefaultToilDefenderOptions = Omit<ResolvedToilDefenderOptions, "code" | "forceFeatures" | "logAdapter"> & {
+    features: FeatureConfig;
+};
+
+const NO_NUMERIC_VM_DIRECTIVE = "toildefender:no-numeric-vm";
 
 function requireBase(): string {
     if (typeof import.meta.url == "string" && import.meta.url.length > 0) {
@@ -49,19 +112,15 @@ function requireBase(): string {
 }
 
 const optionalRequire = createRequire(requireBase());
-function requireOptional(name: string): Loose | null {
+function requireOptional<T>(name: string): T | null {
     try {
-        return optionalRequire(name);
-    } catch (e) {
+        return optionalRequire(name) as T;
+    } catch {
         return null;
     }
 }
 
-const defaultOptions: Required<Omit<ToilDefenderOptions, "code" | "modulesCode" | "forceFeatures" | "logAdapter">> & {
-    features: FeatureConfig;
-    modulesCode: Record<string, string>;
-    logAdapter?: LogAdapter;
-} = {
+const defaultOptions: DefaultToilDefenderOptions = {
     babel: false,
     babelTarget: "ie 11",
     babelPreserveAsync: true,
@@ -143,16 +202,107 @@ const featureDeps: Record<FeatureName, FeatureName[]> = {
     compress: [ "mangle" ]
 };
 
-function isNumericVmInternalNode(node: Loose) {
-    return node && node.toildefender$numericVmInternal === true;
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value == "object" && value !== null;
 }
 
-function takeNumericVmInternalStatements(ast: Loose) {
-    if (!ast || ast.type != "Program") {
+function asAstNode(value: unknown): AstNode {
+    return value as AstNode;
+}
+
+function asAstNodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function asStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item == "string") : [];
+}
+
+function nodeName(node: AstNode): string {
+    const name = (node as { name?: unknown }).name;
+    return typeof name == "string" ? name : "";
+}
+
+function nodeBody(node: AstNode): AstNode {
+    const body = (node as { body?: unknown }).body;
+    return isRecord(body) && typeof body.type == "string" ? (body as AstNode) : { type: "BlockStatement", body: [] };
+}
+
+function nodeBodyArray(node: AstNode): AstNode[] {
+    const body = (node as { body?: unknown }).body;
+    return asAstNodeArray(body);
+}
+
+function nodeParams(node: AstNode): AstNode[] {
+    const params = (node as { params?: unknown }).params;
+    return asAstNodeArray(params);
+}
+
+function methodIdName(method: AstNode): string | null {
+    const id = (method as { id?: unknown }).id;
+    if (isRecord(id) && typeof id.name == "string") {
+        return id.name;
+    }
+    return null;
+}
+
+function methodFlag(method: AstNode, key: "async" | "generator"): boolean {
+    return (method as Record<string, unknown>)[key] === true;
+}
+
+function isNumericVmInternalNode(node: unknown): boolean {
+    return isRecord(node) && node.toildefender$numericVmInternal === true;
+}
+
+function expressionStringValue(node: unknown): string | null {
+    if (!isRecord(node)) {
+        return null;
+    }
+    if (typeof node.value == "string") {
+        return node.value;
+    }
+    const expression = node.expression;
+    if (isRecord(expression) && typeof expression.value == "string") {
+        return expression.value;
+    }
+    return null;
+}
+
+function hasNoNumericVmDirective(node: AstNode): boolean {
+    const bodyNode = nodeBody(node);
+    if (bodyNode.type != "BlockStatement") {
+        return false;
+    }
+    for (const statement of nodeBodyArray(bodyNode)) {
+        if (statement.type != "ExpressionStatement") {
+            return false;
+        }
+        if (statement.directive === NO_NUMERIC_VM_DIRECTIVE || expressionStringValue(statement) === NO_NUMERIC_VM_DIRECTIVE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function markNoNumericVmDirectives(ast: AstNode): AstNode {
+    return traverser.traverse(ast, [], (node: AstNode) => {
+        if (
+            (node.type == "FunctionDeclaration" || node.type == "FunctionExpression" || node.type == "ArrowFunctionExpression")
+            && hasNoNumericVmDirective(node)
+        ) {
+            node.toildefender$noNumericVm = true;
+        }
+        return node;
+    });
+}
+
+function takeNumericVmInternalStatements(ast: AstNode): AstNode[] {
+    if (ast.type != "Program") {
         return [];
     }
-    const retained: Loose[] = [];
-    ast.body = ast.body.filter((statement: Loose) => {
+    const retained: AstNode[] = [];
+    const body = nodeBodyArray(ast);
+    ast.body = body.filter((statement: AstNode) => {
         if (isNumericVmInternalNode(statement)) {
             retained.push(statement);
             return false;
@@ -192,7 +342,7 @@ const featureDescs: Record<FeatureName, Record<string, string>> = {
     }
 };
 
-export var features: FeatureDescriptions = Object.fromEntries(
+export const features: FeatureDescriptions = Object.fromEntries(
     (Object.keys(defaultOptions.features) as FeatureName[]).map((feature) => [
         feature,
         {
@@ -240,7 +390,6 @@ export var features: FeatureDescriptions = Object.fromEntries(
  * });
  */
 export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
-    let options: Loose = inputOptions;
     /**
      * Annotates potentially thrown errors with a label
      */
@@ -249,7 +398,9 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             return task();
         } catch (e) {
             const error = e instanceof Error ? e : new Error(String(e));
-            throw new Error(`[${label}]\t${error.stack || error.message}`);
+            throw new Error(`[${label}]\t${error.stack || error.message}`, {
+                cause: e
+            });
         }
     }
 
@@ -257,8 +408,8 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
      * Adapter for Logger
      */
     function createConsoleLoggingAdapter(logLevel: LogLevel): LogAdapter {
-        const LEVELS = ["log", "error", "warn", "info", "debug"];
-        const allowedLevels: Loose[] = [];
+        const LEVELS: LogLevel[] = ["log", "error", "warn", "info", "debug"];
+        const allowedLevels: LogLevel[] = [];
         for (const level of LEVELS) {
             allowedLevels.push(level);
             if (level == logLevel) {
@@ -266,18 +417,48 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             }
         }
         return (level: LogLevel, data: unknown[]) => {
-            if (_.includes(allowedLevels, level)) {
+            if (allowedLevels.includes(level)) {
                 const prefix = "[task]" + Array(taskIndent).join("\t");
                 console.log(`${prefix}[${level}]\t${data.join("\t")}`);
             }
         };
     }
     
-    var taskIndent = 1;
+    const options = _.merge({}, defaultOptions, inputOptions) as ResolvedToilDefenderOptions; // first argument gets mutated
+    if (options.protections.virtualMachine.enabled) {
+        options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
+            enabled: true
+        });
+        options.features.numeric_vm = true;
+    }
+    if (options.protections.hashMesh.enabled) {
+        options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
+            enabled: true,
+            hashMesh: options.protections.hashMesh
+        });
+        options.features.numeric_vm = true;
+    }
+    if (!options.logAdapter) {
+        options.logAdapter = createConsoleLoggingAdapter(options.logLevel);
+    }
+    if (!options.forceFeatures) {
+        _.map(featureDeps, (deps: FeatureName[], feature: FeatureName) => {
+            if (options.features[feature]) {
+                deps.forEach((dep: FeatureName) => {
+                    options.features[dep] = true;
+                });
+            }
+        });
+    } else {
+        options.features = options.forceFeatures;
+    }
+
+    const logger = new Logger(options.logAdapter);
+    let taskIndent = 1;
     /**
      * Wraps a task, indents its output and measures its duration
      */
-    function doTask(label: string, condition: boolean, task: () => void) {
+    function doTask(label: string, condition: boolean | undefined, task: () => void): TaskAlternative {
         return tryTag(label, () => {
             taskIndent++;
             const prefix = "[task]" + Array(taskIndent).join("\t");
@@ -290,11 +471,13 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
                     const duration = Date.now() - start;
                     logger.info(`${prefix}${label}: ${duration}ms`);
                     return {
-                        otherwise: function() { }
+                        otherwise: () => undefined
                     };
                 } else {
                     return {
-                        otherwise: function (task: () => void) { task(); }
+                        otherwise: (task?: () => void) => {
+                            task?.();
+                        }
                     };
                 }
             } finally {
@@ -304,22 +487,23 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
     }
 
     function transformModernSyntax(code: string, label: string): string {
-        const modernBabel = requireOptional("@babel/core");
+        const modernBabel = requireOptional<ModernBabelTransformer>("@babel/core");
         if (modernBabel) {
-            let presetEnvPath;
+            let presetEnvPath: string;
             try {
                 presetEnvPath = optionalRequire.resolve("@babel/preset-env");
             } catch (e) {
-                throw new Error("Babel transform requested, but @babel/preset-env is not installed");
+                throw new Error("Babel transform requested, but @babel/preset-env is not installed", {
+                    cause: e
+                });
             }
 
-            let presetOptions: Loose;
-            presetOptions = {
+            const presetOptions: BabelPresetEnvOptions = {
                 modules: "commonjs",
                 targets: options.babelTarget,
                 useBuiltIns: false
             };
-            if (options.babelPreserveAsync !== false) {
+            if (options.babelPreserveAsync) {
                 presetOptions.exclude = [
                     "@babel/plugin-transform-async-to-generator",
                     "@babel/plugin-transform-regenerator"
@@ -341,7 +525,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             return result && result.code || code;
         }
 
-        const legacyBabel = requireOptional("babel-core");
+        const legacyBabel = requireOptional<BabelTransformer>("babel-core");
         if (!legacyBabel) {
             throw new Error("Babel transform requested, but neither @babel/core nor babel-core is installed");
         }
@@ -367,22 +551,21 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
                 "babel-plugin-transform-es2015-template-literals",
                 //"babel-plugin-transform-es2015-typeof-symbol",
                 "babel-plugin-transform-es2015-unicode-regex"
-            ].map((plugin: Loose) => optionalRequire.resolve(plugin))
+            ].map((plugin: string) => optionalRequire.resolve(plugin))
         };
-        return legacyBabel.transform(code, babelOptions).code;
+        return legacyBabel.transform(code, babelOptions).code || code;
     }
 
-    function parseSource(code: string, options: Loose): AstNode {
+    function parseSource(code: string, options: esprima.ParseOptions): AstNode {
         try {
-            return esprima.parseScript(code, options) as AstNode;
+            return esprima.parseScript(code, options) as unknown as AstNode;
         } catch (esprimaError) {
             if (!modernParser) {
                 throw esprimaError;
             }
 
-            let modernParseOptions: Loose;
-            modernParseOptions = {
-                sourceType: "unambiguous",
+            const modernParseOptions = {
+                sourceType: "unambiguous" as const,
                 plugins: [
                     "estree",
                     "classProperties",
@@ -393,10 +576,10 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
                     "objectRestSpread"
                 ]
             };
-            const parsed = modernParser.parse(code, modernParseOptions);
+            const parsed = modernParser.parse(code, modernParseOptions as modernParser.ParserOptions);
             return {
                 type: "Program",
-                body: parsed.program.body,
+                body: parsed.program.body as unknown as AstNode[],
                 sourceType: parsed.program.sourceType
             };
         }
@@ -422,20 +605,20 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         return false;
     }
 
-    function dispatcherForMethod(method: AstNode): "main$asyncGenerator" | "main$async" | "main$generator" | "main" {
-        if (method.async === true && method.generator === true) {
+    function dispatcherForMethod(method: AstNode): DispatcherName {
+        if (methodFlag(method, "async") && methodFlag(method, "generator")) {
             return "main$asyncGenerator";
         }
-        if (method.async === true) {
+        if (methodFlag(method, "async")) {
             return "main$async";
         }
-        if (method.generator === true) {
+        if (methodFlag(method, "generator")) {
             return "main$generator";
         }
         return "main";
     }
 
-    function normalizeRatio(value: Loose): number {
+    function normalizeRatio(value: unknown): number {
         const ratio = Number(value);
         if (!Number.isFinite(ratio)) {
             return 1;
@@ -459,42 +642,16 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
     }
 
     function methodControlFlowScore(method: AstNode, index: number): number {
-        const name = method && method.id && method.id.name || "";
-        const seed = options.controlFlow && options.controlFlow.seed || "";
+        const name = methodIdName(method) || "";
+        const seed = options.controlFlow.seed || "";
         return hashString32(`${seed}:${index}:${name}`) / 0x100000000;
     }
     
-    options = _.merge({}, defaultOptions, options); // first argument gets mutated
-    if (options.protections.virtualMachine.enabled) {
-        options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
-            enabled: true
-        });
-        options.features.numeric_vm = true;
-    }
-    if (options.protections.hashMesh.enabled) {
-        options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
-            enabled: true,
-            hashMesh: options.protections.hashMesh
-        });
-        options.features.numeric_vm = true;
-    }
-    if (!options.logAdapter) {
-        options.logAdapter = createConsoleLoggingAdapter(options.logLevel);
-    }
-    if (!options.forceFeatures) {
-        _.map(featureDeps, (deps: Loose, feature: Loose) => {
-            if (options.features[feature]) {
-                deps.forEach((dep: Loose) => options.features[dep] = true);
-            }
-        });
-    } else {
-        options.features = options.forceFeatures;
-    }
-    const controlFlowRatio = normalizeRatio(options.controlFlow && options.controlFlow.ratio);
-    const controlFlowActive = options.features.control_flow && controlFlowRatio > 0;
-    const scopeRatio = normalizeRatio(options.scope && options.scope.ratio);
+    const controlFlowRatio = normalizeRatio(options.controlFlow.ratio);
+    const controlFlowActive = options.features.control_flow === true && controlFlowRatio > 0;
+    const scopeRatio = normalizeRatio(options.scope.ratio);
     
-    const parseOptions: Record<string, Loose> = {};
+    const parseOptions: esprima.ParseOptions = {};
     const scopeOptions = {
         optimistic: true // required or things in the global scope just get lost
     };
@@ -504,7 +661,6 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         sourceType: "script" as const
     };
     
-    var logger = new Logger(options.logAdapter);
     let customBindAdded = false;
 
     const start = Date.now();
@@ -512,16 +668,21 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
     // Preprocess
     doTask("preprocessing", true, () => {
         const preprocessor = new prPreprocessing(logger); 
-        options.modulesCode = _.mapValues(
-            options.modulesCode,
-            (code: Loose, key: Loose) => tryTag(key, () => preprocessor.process(code, options.preprocessorVariables))
-        );
+        const modulesCode: Record<string, string> = {};
+        for (const [key, code] of Object.entries(options.modulesCode)) {
+            modulesCode[key] = tryTag(key, () => preprocessor.process(code, options.preprocessorVariables));
+        }
+        options.modulesCode = modulesCode;
         options.code = tryTag("app", () => preprocessor.process(options.code, options.preprocessorVariables));
     });
     
     // Apply babel
     doTask("babel", options.babel, () => {
-        options.modulesCode = _.mapValues(options.modulesCode, (moduleCode: Loose, key: Loose) => tryTag(key, () => transformModernSyntax(moduleCode, key)));
+        const modulesCode: Record<string, string> = {};
+        for (const [key, moduleCode] of Object.entries(options.modulesCode)) {
+            modulesCode[key] = tryTag(key, () => transformModernSyntax(moduleCode, key));
+        }
+        options.modulesCode = modulesCode;
         options.code = tryTag("app", () => transformModernSyntax(options.code, "app"));
     });
     
@@ -537,46 +698,54 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
     }
 
     doTask("parse", true, () => {
-        modulesAST = _.mapValues(options.modulesCode, (code: Loose, key: Loose) => tryTag(key, () => parseSource(code, parseOptions)));
+        const parsedModules: Record<string, AstNode> = {};
+        for (const [key, code] of Object.entries(options.modulesCode)) {
+            parsedModules[key] = tryTag(key, () => parseSource(code, parseOptions));
+        }
+        modulesAST = parsedModules;
         modulesAST.app = tryTag("app", () => parseSource(options.code, parseOptions));
     });
     
     // Merge depedencies into main modules
     doTask("merge", true, () => {
         const modules = new prModules(logger);
-        ast = modules.merge(modulesAST, "app", null);
+        ast = asAstNode(modules.merge(modulesAST, "app", null));
     });
 
     // Insert dead code
     doTask("dead_code", options.features.dead_code, () => {
         const deadCode = new prDeadCode(logger);
-        ast = deadCode.insert(ast, 1.0);
+        ast = asAstNode(deadCode.insert(ast, 1.0));
+    });
+
+    doTask("numeric_vm_markers", true, () => {
+        ast = asAstNode(markNoNumericVmDirectives(ast));
     });
     
     // Simplify graph
-    doTask("simplify", options.simplify !== false, () => {
+    doTask("simplify", options.simplify, () => {
         const normalizer = new prNormalizer(logger);
-        ast = normalizer.simplify(ast);
+        ast = asAstNode(normalizer.simplify(ast));
     });
 
     doTask("numeric_vm", options.features.numeric_vm || options.numericVm.enabled, () => {
         const numericVm = new prNumericVm(logger, _.merge({}, options.numericVm, {
             enabled: options.features.numeric_vm || options.numericVm.enabled
         }));
-        ast = numericVm.apply(ast);
+        ast = asAstNode(numericVm.apply(ast));
     });
         
     // Move identifiers
     doTask("identifiers", options.features.identifiers, () => {
         const identifiers = new prIdentifiers(logger);
         
-        ast = identifiers.computeProperties(ast);
-        ast = identifiers.arrayizeObjects(ast, {
+        ast = asAstNode(identifiers.computeProperties(ast));
+        ast = asAstNode(identifiers.arrayizeObjects(ast, {
             objectPacking: options.features.object_packing !== false
-        });
+        }));
         //ast = identifiers.moveIdentifiers(ast, escope.analyze(ast, scopeOptions));
         //^ why is this commented out?
-        ast = identifiers.moveLiterals(ast, escope.analyze(ast, scopeOptions));
+        ast = asAstNode(identifiers.moveLiterals(ast, escope.analyze(ast, scopeOptions)));
     });
     
     doTask("literals", options.features.literals, () => {
@@ -604,50 +773,57 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         doTask("create_scope_objects", true, () => {
             scopes.createScopeObjects(ast, escope.analyze(ast, lexicalScopeOptions), {
                 ratio: scopeRatio,
-                seed: options.scope && options.scope.seed || "toildefender-scope",
+                seed: options.scope.seed || "toildefender-scope",
                 forceProgram: controlFlowActive
             });
         });
         
         // Calculate entry points for all methods
-        const methodEntryPoints: Record<string, Loose> = {};
+        const methodEntryPoints: Record<string, MethodEntryPoint> = {};
+        const entryPointFor = (method: AstNode): MethodEntryPoint | undefined => {
+            const name = methodIdName(method);
+            return name ? methodEntryPoints[name] : undefined;
+        };
         doTask("list_methods", true, () => {
-            methods.listMethods(ast).forEach((methodName: string) => {
+            for (const methodName of asStringArray(methods.listMethods(ast))) {
                 methodEntryPoints[methodName] = {
                     entry: rng.get()
                 };
-            });
+            }
         });
         
         // Extract function declarations and expressions
-        let fns: AstNode[];
+        let fns: AstNode[] = [];
         doTask("extract_methods", true, () => {
             const scopeManager = escope.analyze(ast, lexicalScopeOptions);
-            fns = methods.extractMethods(ast);
-            fns = fns.map((method: Loose) => {
+            fns = asAstNodeArray(methods.extractMethods(ast));
+            fns = fns.map((method: AstNode) => {
                 const refers = methods.methodRefersToArguments(method, scopeManager);
-                methods.removeFirstArguments(method, refers ? method.params.filter((x: AstNode) => x.name.indexOf("$$scope") == 0).length : 0);
-                return methods.replaceArgumentReferences(method, true);
+                const scopeArgumentCount = refers ? nodeParams(method).filter((param) => nodeName(param).indexOf("$$scope") == 0).length : 0;
+                methods.removeFirstArguments(method, scopeArgumentCount);
+                return asAstNode(methods.replaceArgumentReferences(method, true));
             });
-            fns.forEach((method: Loose) => {
-                if (method && method.id && methodEntryPoints[method.id.name]) {
-                    methodEntryPoints[method.id.name].dispatcher = dispatcherForMethod(method);
+            fns.forEach((method: AstNode) => {
+                const entryPoint = entryPointFor(method);
+                if (entryPoint) {
+                    entryPoint.dispatcher = dispatcherForMethod(method);
                 }
             });
-            const selectedMethodEntryPoints: Record<string, Loose> = {};
-            fns.forEach((method: Loose, index: Loose) => {
-                if (!method || !method.id || !methodEntryPoints[method.id.name]) {
+            const selectedMethodEntryPoints: Record<string, MethodEntryPoint> = {};
+            fns.forEach((method: AstNode, index: number) => {
+                const name = methodIdName(method);
+                if (!name || !methodEntryPoints[name]) {
                     return;
                 }
                 if (controlFlowRatio >= 1 || methodControlFlowScore(method, index) < controlFlowRatio) {
-                    selectedMethodEntryPoints[method.id.name] = methodEntryPoints[method.id.name];
+                    selectedMethodEntryPoints[name] = methodEntryPoints[name];
                 }
             });
 
             if (controlFlowActive) {
                 methods.replaceFunctionCalls(ast, selectedMethodEntryPoints);
-                fns.forEach((method: Loose) => {
-                    methods.replaceFunctionCalls(method.body, selectedMethodEntryPoints);
+                fns.forEach((method: AstNode) => {
+                    methods.replaceFunctionCalls(nodeBody(method), selectedMethodEntryPoints);
                 });
             }
         });
@@ -656,7 +832,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             // Apply control flow flattening and merge methods
             const flattener = new prFlattener(logger, rng);
             const entry = rng.get(), exit = rng.get();
-            const dispatcherGroups: Record<string, { async?: boolean; generator?: boolean; fns: AstNode[] }> = {
+            const dispatcherGroups: Record<AsyncDispatcherName, DispatcherGroup> = {
                 "main$async": {
                     async: true,
                     fns: []
@@ -675,7 +851,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             const retainedFns: AstNode[] = [];
             const retainedInternalFns = takeNumericVmInternalStatements(ast);
 
-            fns.forEach((method: Loose, index: Loose) => {
+            fns.forEach((method: AstNode, index: number) => {
                 const selected = controlFlowRatio >= 1 || methodControlFlowScore(method, index) < controlFlowRatio;
                 if (!selected) {
                     retainedFns.push(method);
@@ -690,58 +866,69 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             });
 
             flattener.addMethod(ast, entry, exit);
-            syncFns.forEach((method: Loose) => {
+            syncFns.forEach((method: AstNode) => {
                 methods.bumpArgumentsIndices(method, 1);
 
-                const entry = methodEntryPoints[method.id.name].entry;
-                flattener.addMethod(method.body, entry, exit);
+                const methodEntry = entryPointFor(method);
+                if (!methodEntry) {
+                    return;
+                }
+                flattener.addMethod(nodeBody(method), methodEntry.entry, exit);
             });
             
-            let syncAst = flattener.getProgram(entry, exit, {
+            let syncAst = asAstNode(flattener.getProgram(entry, exit, {
                 name: "main",
                 invoke: true
-            });
+            }));
 
-            syncAst = flattener.unifyPrefixStatements(syncAst);
+            syncAst = asAstNode(flattener.unifyPrefixStatements(syncAst));
 
             const asyncPrograms: AstNode[] = [];
-            Object.keys(dispatcherGroups).forEach((name: Loose) => {
-                const group = dispatcherGroups[name];
+            for (const [name, group] of Object.entries(dispatcherGroups) as Array<[AsyncDispatcherName, DispatcherGroup]>) {
                 if (group.fns.length == 0) {
-                    return;
+                    continue;
                 }
 
                 const groupFlattener = new prFlattener(logger, rng);
-                const groupEntry = methodEntryPoints[group.fns[0].id.name].entry;
+                const firstMethodEntry = entryPointFor(group.fns[0]);
+                if (!firstMethodEntry) {
+                    continue;
+                }
                 const groupExit = rng.get();
 
-                group.fns.forEach((method: Loose) => {
+                group.fns.forEach((method: AstNode) => {
                     methods.bumpArgumentsIndices(method, 1);
 
-                    const entry = methodEntryPoints[method.id.name].entry;
-                    groupFlattener.addMethod(method.body, entry, groupExit);
+                    const methodEntry = entryPointFor(method);
+                    if (!methodEntry) {
+                        return;
+                    }
+                    groupFlattener.addMethod(nodeBody(method), methodEntry.entry, groupExit);
                 });
 
-                let groupAst = groupFlattener.getProgram(groupEntry, groupExit, {
+                let groupAst = asAstNode(groupFlattener.getProgram(firstMethodEntry.entry, groupExit, {
                     name: name,
-                    async: group.async === true,
-                    generator: group.generator === true,
+                    async: Boolean(group.async),
+                    generator: Boolean(group.generator),
                     invoke: false
-                });
+                }));
 
-                groupAst = groupFlattener.unifyPrefixStatements(groupAst);
+                groupAst = asAstNode(groupFlattener.unifyPrefixStatements(groupAst));
                 asyncPrograms.push(groupAst);
-            });
+            }
 
             if (asyncPrograms.length > 0) {
                 ast = {
                     type: "Program",
-                    body: retainedInternalFns.concat(retainedFns).concat(Array.prototype.concat.apply([], asyncPrograms.map((program: Loose) => program.body)).concat(syncAst.body))
+                    body: retainedInternalFns
+                        .concat(retainedFns)
+                        .concat(asyncPrograms.flatMap((program) => nodeBodyArray(program)))
+                        .concat(nodeBodyArray(syncAst))
                 };
             } else {
                 ast = {
                     type: "Program",
-                    body: retainedInternalFns.concat(retainedFns).concat(syncAst.body)
+                    body: retainedInternalFns.concat(retainedFns).concat(nodeBodyArray(syncAst))
                 };
             }
         })
@@ -757,19 +944,19 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         });
     });
 
-    doTask("add_runtime_helpers", options.runtimeHelpers !== false && (options.features.scope || options.features.object_packing || options.features.literals || options.babel === false), () => {
+    doTask("add_runtime_helpers", options.runtimeHelpers && (Boolean(options.features.scope || options.features.object_packing || options.features.literals) || !options.babel), () => {
         addCustomBindOnce();
     });
     
     // Postprocessing
     doTask("postprocessing", true, () => {
         const postprocessing = new prPostprocessing(logger);
-        ast = postprocessing.do(ast);
+        ast = asAstNode(postprocessing.do(ast));
     });
     
     doTask("health", options.features.health, () => {
         const health = new prHealth(logger);
-        ast = health.check(ast);
+        ast = asAstNode(health.check(ast));
     });
     
     doTask("mangle", options.features.mangle, () => {
@@ -781,7 +968,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         if (ast.type == "Program") {
             ast.type = "BlockStatement";
         }
-        ast = uglifier.uglify({
+        ast = asAstNode(uglifier.uglify({
             type: "Program",
             body: [
                 {
@@ -794,12 +981,10 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
                     }
                 }
             ]
-        });
+        }));
     });
     
-    let codegenOptions: Loose;
-    codegenOptions = {
-        sourceMap: false,
+    const codegenOptions: GenerateOptions = {
         sourceMapWithCode: false
     };
     
@@ -812,13 +997,12 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         };
     });
     
-    const result = escodegen.generate(ast, codegenOptions) as Loose;
+    const code = escodegen.generate(ast, codegenOptions);
 
     const duration = Date.now() - start;
     
     return {
-        code: result.code || result,
-        map: result.map && result.map.toString()
+        code
     };
 }
 

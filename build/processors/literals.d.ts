@@ -1,7 +1,7 @@
-import type { Loose } from "../types.js";
+import type { AstNode, LoggerLike } from "../types.js";
 export default class Literals {
-    logger: Loose;
-    constructor(logger: Loose);
-    extractStrings(ast: Loose): any;
-    generateStrings(ast: Loose): any;
+    logger: LoggerLike;
+    constructor(logger: LoggerLike);
+    extractStrings(ast: AstNode): AstNode;
+    generateStrings(ast: AstNode): AstNode;
 }

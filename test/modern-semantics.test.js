@@ -1564,6 +1564,30 @@ test("virtual machine protection can limit selected functions", () => {
     assert.deepEqual(run(result.code), run(code));
 });
 
+test("virtual machine protection honors no-vm directive on hot helpers", () => {
+    const code = `
+        function hot(value) {
+            'toildefender:no-numeric-vm';
+            var total = 0;
+            var i = 0;
+            while (i < value.length) {
+                total += value.charCodeAt(i);
+                i += 1;
+            }
+            return total;
+        }
+        function cold(value) {
+            return value * 3;
+        }
+        globalThis.__result = [hot("abc"), cold(7)];
+    `;
+    const defended = defendVmCode(code);
+
+    assert.equal((defended.match(/toildefender\$numericVmRun/g) || []).length, 2);
+    assert.match(defended, /function hot/);
+    assert.deepEqual(run(defended), run(code));
+});
+
 test("scope extraction does not bind-wrap numeric VM runtime internals", () => {
     const code = `
         function add(value) {

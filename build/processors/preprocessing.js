@@ -1,4 +1,3 @@
-import _ from "lodash";
 import { Parser } from "expr-eval-fork";
 //#region src/processors/preprocessing.ts
 var DEFAULT_PREPROCESSOR_VARIABLES = {
@@ -24,8 +23,17 @@ function codeFromNodeArray(nodes) {
 * @returns {string}
 */
 function removeShebangs(code) {
-	if (_.startsWith(code, "#!")) code = code.split(/\r?\n/).slice(1).join("\n");
+	if (code.startsWith("#!")) code = code.split(/\r?\n/).slice(1).join("\n");
 	return code;
+}
+function toExpressionValue(value) {
+	if (typeof value == "number" || typeof value == "string") return value;
+	return value === true ? 1 : 0;
+}
+function toExpressionValues(defines) {
+	const values = {};
+	for (const [key, value] of Object.entries(defines)) values[key] = toExpressionValue(value);
+	return values;
 }
 var ArrayUtils = class {
 	/**
@@ -40,7 +48,6 @@ var ArrayUtils = class {
 };
 var Node = class {
 	line = 0;
-	constructor() {}
 	/**
 	* Evaluates tree into an array of TextNodes.
 	* @param {Object.<string, string>} defines Preprocessor variables
@@ -57,7 +64,7 @@ var BlockNode = class extends Node {
 		this.children = [];
 	}
 	eval(defines) {
-		return _.flatten(this.children.map((x) => x.eval(defines)));
+		return this.children.flatMap((child) => child.eval(defines));
 	}
 };
 var TextNode = class extends Node {
@@ -106,10 +113,10 @@ var IfBlockNode = class extends BlockNode {
 	*/
 	evalCond(defines) {
 		let condition = this.condition;
-		condition = condition.replace(/!defined\(([\w\d]+)\)/g, (match, p1) => !defines.hasOwnProperty(p1) ? "true" : "false");
-		condition = condition.replace(/defined\(([\w\d]+)\)/g, (match, p1) => defines.hasOwnProperty(p1) ? "true" : "false");
+		condition = condition.replace(/!defined\(([\w\d]+)\)/g, (_match, p1) => Object.hasOwn(defines, p1) ? "false" : "true");
+		condition = condition.replace(/defined\(([\w\d]+)\)/g, (_match, p1) => Object.hasOwn(defines, p1) ? "true" : "false");
 		condition = normalizeConditionSyntax(condition);
-		return Boolean(Parser.evaluate(condition, defines));
+		return Boolean(Parser.evaluate(condition, toExpressionValues(defines)));
 	}
 	/**
 	* Evaluates node with given condition result.
@@ -153,9 +160,10 @@ var Preprocessing = class {
 			if (!block) throw new Error("preprocessor stack underflow");
 			return block;
 		};
-		const defines = {};
-		_.merge(defines, DEFAULT_PREPROCESSOR_VARIABLES);
-		_.merge(defines, preprocessorVariables);
+		const defines = {
+			...DEFAULT_PREPROCESSOR_VARIABLES,
+			...preprocessorVariables
+		};
 		for (let i = 0; i < lines.length; ++i) {
 			const line = lines[i];
 			const [, directive, parameters] = /^\s*\/\/\s*#(\w+)\s*(.+)?$/.exec(line) || [];
@@ -182,7 +190,7 @@ var Preprocessing = class {
 				case "if":
 				case "ifdef":
 				case "ifndef": {
-					const elem = directive == "if" ? new IfBlockNode(parameters) : directive == "ifdef" ? new IfBlockNode(`defined(${parameters})`) : directive == "ifndef" ? new IfBlockNode(`!defined(${parameters})`) : new IfBlockNode(parameters || "");
+					const elem = directive == "if" ? new IfBlockNode(parameters || "") : directive == "ifdef" ? new IfBlockNode(`defined(${parameters})`) : directive == "ifndef" ? new IfBlockNode(`!defined(${parameters})`) : new IfBlockNode(parameters || "");
 					elem.line = i;
 					currentBlock().children.push(elem);
 					stack.push(elem);

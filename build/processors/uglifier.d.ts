@@ -1,6 +1,6 @@
-import type { Loose } from "../types.js";
+import type { AstNode, LoggerLike } from "../types.js";
 export default class Uglifier {
-    logger: Loose;
-    constructor(logger: Loose);
-    uglify(ast: Loose): any;
+    logger: LoggerLike;
+    constructor(logger: LoggerLike);
+    uglify(ast: AstNode): AstNode;
 }

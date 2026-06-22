@@ -1,8 +1,9 @@
-import type { Loose } from "../types.js";
+import ESUtils from "../esutils.js";
+import type { AstNode, LoggerLike } from "../types.js";
 export default class Modules {
-    logger: Loose;
-    esutils: Loose;
-    constructor(logger: Loose);
-    replaceExportsReferences(ast: Loose, replacement: Loose): any;
-    merge(modules: Loose, mainKey: Loose, scopeManager: Loose): any;
+    logger: LoggerLike;
+    esutils: ESUtils;
+    constructor(logger: LoggerLike);
+    replaceExportsReferences(ast: AstNode, replacement: AstNode): AstNode;
+    merge(modules: Record<string, AstNode>, mainKey: string, _scopeManager: unknown): AstNode;
 }

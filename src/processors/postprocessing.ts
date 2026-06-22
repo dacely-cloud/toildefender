@@ -1,9 +1,42 @@
 import assert from "assert";
-import _ from "lodash";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
-import utils from "../utils.js";
 import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
+
+function astNodeArray(value: unknown): AstNode[] {
+    return Array.isArray(value) ? (value as AstNode[]) : [];
+}
+
+function nodeArguments(node: AstNode): AstNode[] {
+    return astNodeArray((node as { arguments?: unknown }).arguments);
+}
+
+function setNodeArguments(node: AstNode, args: AstNode[]): void {
+    (node as { arguments?: AstNode[] }).arguments = args;
+}
+
+function nodeBody(node: AstNode): AstNode[] {
+    return astNodeArray((node as { body?: unknown }).body);
+}
+
+function setNodeBody(node: AstNode, body: AstNode[]): void {
+    (node as { body?: AstNode[] }).body = body;
+}
+
+function nodeConsequent(node: AstNode): AstNode[] {
+    return astNodeArray((node as { consequent?: unknown }).consequent);
+}
+
+function setNodeConsequent(node: AstNode, consequent: AstNode[]): void {
+    (node as { consequent?: AstNode[] }).consequent = consequent;
+}
+
+function isIdentifierNamed(value: unknown, name: string): boolean {
+    return typeof value == "object"
+        && value !== null
+        && (value as { type?: unknown }).type == "Identifier"
+        && (value as { name?: unknown }).name == name;
+}
 
 /**
  * Merges nested bind calls like
@@ -17,7 +50,9 @@ function mergeNestedBinds(node: AstNode): AstNode[] {
     assert.ok(estest.isNode(node));
     
     if (isBindCall(node)) {
-        return mergeNestedBinds(node.arguments[0]).concat(node.arguments.slice(1)); 
+        const args = nodeArguments(node);
+        const first = args[0];
+        return first ? mergeNestedBinds(first).concat(args.slice(1)) : [];
     } else {
         return [ node ];
     }
@@ -32,8 +67,7 @@ function isBindCall(node: AstNode): boolean {
     assert.ok(estest.isNode(node));
     
     return node.type == "CallExpression"
-        && node.callee.type == "Identifier"
-        && node.callee.name == "toildefender$bind";
+        && isIdentifierNamed((node as { callee?: unknown }).callee, "toildefender$bind");
 }
 
 export default class Postprocessing {
@@ -53,11 +87,11 @@ export default class Postprocessing {
         
         return traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
             if (isBindCall(node)) {
-                node.arguments = mergeNestedBinds(node);
+                setNodeArguments(node, mergeNestedBinds(node));
             } else if (node.type == "BlockStatement" || node.type == "Program") {
-                node.body = node.body.filter((x: AstNode) => estest.isNode(x) && x.type != "EmptyStatement");
+                setNodeBody(node, nodeBody(node).filter((x: AstNode) => estest.isNode(x) && x.type != "EmptyStatement"));
             } else if (node.type == "SwitchCase") {
-                node.consequent = node.consequent.filter((x: AstNode) => estest.isNode(x) && x.type != "EmptyStatement");
+                setNodeConsequent(node, nodeConsequent(node).filter((x: AstNode) => estest.isNode(x) && x.type != "EmptyStatement"));
             }
             
             return node;

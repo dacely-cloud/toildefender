@@ -21,7 +21,7 @@ declare module "esshorten" {
     const esshorten: {
         mangle: (
             ast: import("./types.js").AstNode,
-            options?: import("./types.js").Loose
+            options?: unknown
         ) => import("./types.js").AstNode;
     };
 

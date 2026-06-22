@@ -1,5 +1,5 @@
 import type { FeatureDescriptions, ToilDefenderOptions, ToilDefenderResult } from "./types.js";
-export declare var features: FeatureDescriptions;
+export declare const features: FeatureDescriptions;
 export declare function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult;
 declare const api: {
     features: FeatureDescriptions;

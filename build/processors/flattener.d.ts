@@ -1,74 +1,38 @@
-import type { Loose } from "../types.js";
-export default class Flattener {
-    logger: Loose;
-    rng: Loose;
-    emitter: Loose;
-    output: Loose;
-    handlers: Loose;
-    breaks: Loose;
-    continues: Loose;
-    constructor(logger: Loose, rng: Loose);
-    addMethod(input: Loose, entry: Loose, exit: Loose): void;
-    getCases(entry: Loose, exit: Loose): {
-        type: string;
-        block: {
-            type: string;
-            body: {
-                type: string;
-                discriminant: {
-                    type: string;
-                    name: string;
-                };
-                cases: any[];
-            }[];
-        };
-        handler: {
-            type: string;
-            param: {
-                type: string;
-                name: string;
-            };
-            body: {
-                type: string;
-                body: ({
-                    type: string;
-                    expression: {
-                        type: string;
-                        operator: string;
-                        left: {
-                            type: string;
-                            name: string;
-                        };
-                        right: {
-                            type: string;
-                            value: null;
-                        };
-                    };
-                    discriminant?: undefined;
-                    cases?: undefined;
-                } | {
-                    type: string;
-                    discriminant: {
-                        type: string;
-                        name: string;
-                    };
-                    cases: any;
-                    expression?: undefined;
-                })[];
-            };
-        };
-    };
-    getProgram(entry: Loose, exit: Loose, options: Loose): {
-        type: string;
-        body: any[];
-    };
-    transformStatement(node: Loose, entry: Loose, exit: Loose): void;
-    transformBlock(node: Loose, entry: Loose, exit: Loose): void;
-    transformSequence(node: Loose, entry: Loose, exit: Loose): void;
-    transformIf(node: Loose, entry: Loose, exit: Loose): void;
-    transformWhile(node: Loose, entry: Loose, exit: Loose): void;
-    transformDoWhile(node: Loose, entry: Loose, exit: Loose): void;
-    transformSwitch(node: Loose, entry: Loose, exit: Loose): void;
-    transformTryCatch(node: Loose, entry: Loose, exit: Loose): void;
-    unifyPrefixStatements(ast: Loose): any;
+import { EventEmitter } from "events";
+import type { AstNode, LoggerLike } from "../types.js";
+interface RandomLike {
+    get(): number;
 }
+interface JumpTarget {
+    id: number;
+    label: string | null;
+}
+interface ProgramOptions {
+    async?: boolean;
+    generator?: boolean;
+    invoke?: boolean;
+    name?: string;
+}
+export default class Flattener {
+    logger: LoggerLike;
+    rng: RandomLike;
+    emitter: EventEmitter;
+    output: AstNode[];
+    handlers: AstNode[];
+    breaks: JumpTarget[];
+    continues: JumpTarget[];
+    constructor(logger: LoggerLike, rng: RandomLike);
+    addMethod(input: AstNode, entry: number, exit: number): void;
+    getCases(entry: number, exit: number): AstNode;
+    getProgram(entry: number, exit: number, options?: ProgramOptions): AstNode;
+    transformStatement(node: AstNode, entry: number, exit: number): void;
+    transformBlock(node: AstNode, entry: number, exit: number): void;
+    transformSequence(node: AstNode, entry: number, exit: number): void;
+    transformIf(node: AstNode, entry: number, exit: number): void;
+    transformWhile(node: AstNode, entry: number, exit: number): void;
+    transformDoWhile(node: AstNode, entry: number, exit: number): void;
+    transformSwitch(node: AstNode, entry: number, exit: number): void;
+    transformTryCatch(node: AstNode, entry: number, exit: number): void;
+    unifyPrefixStatements(ast: AstNode): AstNode;
+}
+export {};

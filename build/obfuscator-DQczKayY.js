@@ -8,7 +8,7 @@ import escope from "escope";
 import * as esprima from "esprima";
 import assert from "assert";
 import estraverse from "estraverse";
-import events from "events";
+import { EventEmitter } from "events";
 import esshorten from "esshorten";
 import crypto from "crypto";
 //#region src/estest.ts
@@ -158,7 +158,7 @@ var VISITOR_KEYS = Object.assign({}, estraverse.VisitorKeys, {
 	PropertyDefinition: ["key", "value"],
 	FieldDefinition: ["key", "value"]
 });
-function nodeFields$1(node) {
+function nodeFields$8(node) {
 	return node;
 }
 function unknownArray(value) {
@@ -211,7 +211,7 @@ var traverser_default = {
 function visitChildren(node, processor) {
 	assert.ok(estest_default.isNode(node));
 	assert.equal(typeof processor, "function");
-	const fields = nodeFields$1(node);
+	const fields = nodeFields$8(node);
 	(VISITOR_KEYS[node.type] || []).forEach((key) => {
 		const value = fields[key];
 		const values = unknownArray(value);
@@ -231,7 +231,7 @@ function visitChildren(node, processor) {
 function visitChildrenEx(node, processor) {
 	assert.ok(estest_default.isNode(node));
 	assert.equal(typeof processor, "function");
-	const fields = nodeFields$1(node);
+	const fields = nodeFields$8(node);
 	(VISITOR_KEYS[node.type] || []).forEach((key) => {
 		const value = fields[key];
 		const values = unknownArray(value);
@@ -330,6 +330,10 @@ var KEYWORDS = [
 function isClassMethodBody(stack) {
 	return stack.some((frame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
 }
+function blockBody(node) {
+	const body = node.body;
+	return Array.isArray(body) ? body : [];
+}
 function containsLexicalDeclaration(node) {
 	if (node.type == "ClassDeclaration" || node.type == "FunctionDeclaration" || node.type == "VariableDeclaration" && node.kind != "var") return true;
 	let found = false;
@@ -357,32 +361,36 @@ var DeadCode = class {
 		assert.ok(estest_default.isNode(ast));
 		new utils_default.UniqueRandomAlpha(3);
 		return traverser_default.traverse(ast, [], (node, stack) => {
-			if (node.type == "BlockStatement" && !isClassMethodBody(stack)) for (let i = 0; i < probability; ++i) {
-				if (probability - i < Math.random()) continue;
-				const pos = utils_default.random(0, node.body.length - 1);
-				const len = utils_default.random(1, node.body.length - pos);
-				const varValue = _.sample(KEYWORDS);
-				if (node.body.slice(pos, pos + len).some(containsLexicalDeclaration)) continue;
-				const spliced = node.body.splice(pos, len);
-				node.body.splice(pos, 0, {
-					type: "IfStatement",
-					test: {
-						type: "BinaryExpression",
-						operator: "==",
-						left: {
-							type: "Literal",
-							value: varValue
+			if (node.type == "BlockStatement" && !isClassMethodBody(stack)) {
+				const body = blockBody(node);
+				if (body.length == 0) return node;
+				for (let i = 0; i < probability; ++i) {
+					if (probability - i < Math.random()) continue;
+					const pos = utils_default.random(0, body.length - 1);
+					const len = utils_default.random(1, body.length - pos);
+					const varValue = KEYWORDS[utils_default.random(0, KEYWORDS.length)] || KEYWORDS[0];
+					if (body.slice(pos, pos + len).some(containsLexicalDeclaration)) continue;
+					const spliced = body.splice(pos, len);
+					body.splice(pos, 0, {
+						type: "IfStatement",
+						test: {
+							type: "BinaryExpression",
+							operator: "==",
+							left: {
+								type: "Literal",
+								value: varValue
+							},
+							right: {
+								type: "Literal",
+								value: varValue
+							}
 						},
-						right: {
-							type: "Literal",
-							value: varValue
+						consequent: {
+							type: "BlockStatement",
+							body: spliced
 						}
-					},
-					consequent: {
-						type: "BlockStatement",
-						body: spliced
-					}
-				});
+					});
+				}
 			}
 			return node;
 		});
@@ -390,18 +398,18 @@ var DeadCode = class {
 };
 //#endregion
 //#region src/esutils.ts
-function nodeFields(node) {
+function nodeFields$7(node) {
 	return node;
 }
 function isStatementContainer(node) {
 	return node.type == "Program" || node.type == "BlockStatement";
 }
 function statementBody(node) {
-	const body = nodeFields(node).body;
+	const body = nodeFields$7(node).body;
 	return Array.isArray(body) ? body : null;
 }
 function nestedStatementContainer(node) {
-	const body = nodeFields(node).body;
+	const body = nodeFields$7(node).body;
 	return estest_default.isNode(body) && isStatementContainer(body) ? body : null;
 }
 var ESUtils = class {
@@ -499,6 +507,49 @@ var ESUtils = class {
 };
 //#endregion
 //#region src/processors/modules.ts
+function nodeArray$5(value) {
+	return Array.isArray(value) ? value : [];
+}
+function childNode$7(node, key) {
+	const value = node[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function nodeName$9(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function literalValue(node) {
+	return node?.value;
+}
+function nodeArguments$3(node) {
+	return nodeArray$5(node.arguments);
+}
+function nodeBody$2(node) {
+	return nodeArray$5(node.body);
+}
+function setNodeBody$1(node, body) {
+	node.body = body;
+}
+function parentOf$2(node) {
+	const parent = node.toildefender$parent;
+	return estest_default.isNode(parent) ? parent : null;
+}
+function isIdentifierNamed$1(node, name) {
+	return node?.type == "Identifier" && nodeName$9(node) == name;
+}
+function isRequireCall(node) {
+	return node.type == "CallExpression" && isIdentifierNamed$1(childNode$7(node, "callee"), "require");
+}
+function firstStringArgument(node) {
+	const value = literalValue(nodeArguments$3(node)[0] || null);
+	return typeof value == "string" ? value : null;
+}
+function isModuleExportsMember(node) {
+	if (!node || node.type != "MemberExpression") return false;
+	const object = childNode$7(node, "object");
+	const property = childNode$7(node, "property");
+	return isIdentifierNamed$1(object, "module") && (isIdentifierNamed$1(property, "exports") || property?.type == "Literal" && literalValue(property) == "exports");
+}
 /**
 * Transform calls to require().
 * @param {Node} node Root node
@@ -508,9 +559,9 @@ var ESUtils = class {
 function findRequires(node, processor) {
 	assert.ok(estest_default.isNode(node));
 	assert.equal(typeof processor, "function");
-	return traverser_default.traverse(node, [], (node, stack) => {
-		if (node.type == "CallExpression" && node.callee.type == "Identifier" && node.callee.name == "require") return processor(node, stack);
-		else return node;
+	return traverser_default.traverse(node, [], (child, stack) => {
+		if (isRequireCall(child)) return processor(child, stack);
+		return child;
 	});
 }
 /**
@@ -519,7 +570,7 @@ function findRequires(node, processor) {
 * @returns {string[]}
 */
 function splitPath(path) {
-	return path.split(/[\/\\]/g).filter((x) => x != null && x.length > 0);
+	return path.split(/[\\/]/g).filter((part) => part.length > 0);
 }
 /**
 * Normalize path.
@@ -567,9 +618,9 @@ var Modules = class {
 		this.esutils.setParentsRecursive(ast);
 		escope.analyze(ast, { optimistic: true }).scopes.forEach((scope) => {
 			scope.references.filter((reference) => !utils_default.isResolvedReference(reference)).forEach((reference) => {
-				const parent = reference.identifier.toildefender$parent;
-				if (reference.identifier.name == "exports") this.esutils.replaceNode(ast, reference.identifier, utils_default.cloneISwearIKnowWhatImDoing(replacement));
-				else if (parent.type == "MemberExpression" && parent.object.type == "Identifier" && parent.object.name == "module" && (parent.property.type == "Identifier" && parent.property.name == "exports" || parent.property.type == "Literal" && parent.property.value == "exports")) this.esutils.replaceNode(ast, parent, utils_default.cloneISwearIKnowWhatImDoing(replacement));
+				const parent = parentOf$2(reference.identifier);
+				if (nodeName$9(reference.identifier) == "exports") this.esutils.replaceNode(ast, reference.identifier, utils_default.cloneISwearIKnowWhatImDoing(replacement));
+				else if (parent && isModuleExportsMember(parent)) this.esutils.replaceNode(ast, parent, utils_default.cloneISwearIKnowWhatImDoing(replacement));
 			});
 		});
 		return ast;
@@ -581,43 +632,49 @@ var Modules = class {
 	* @param {ScopeManager} scopeManager Scope manager
 	* @returns {Node} Transformed root node
 	*/
-	merge(modules, mainKey, scopeManager) {
+	merge(modules, mainKey, _scopeManager) {
 		assert.ok(Object.keys(modules).length > 0);
 		assert.equal(typeof mainKey, "string");
-		modules = _.mapKeys(modules, (value, key) => normalizePath(key));
-		mainKey = normalizePath(mainKey);
+		const normalizedModules = {};
+		for (const [key, value] of Object.entries(modules)) normalizedModules[normalizePath(key)] = value;
+		const normalizedMainKey = normalizePath(mainKey);
+		const declarationDeclarations = [];
 		const declaration = {
 			type: "VariableDeclaration",
 			kind: "var",
-			declarations: []
+			declarations: declarationDeclarations
 		};
 		const embeds = [];
 		const rng = new utils_default.UniqueRandomAlpha(3);
 		const processedModules = {};
-		const requiresOrder = [];
 		const walkDeps = (key, stack = []) => {
-			findRequires(modules[key], (node) => {
-				let path = node.arguments.length > 0 && node.arguments[0].value;
-				if (!path) return node;
+			const moduleAst = normalizedModules[key];
+			if (!moduleAst) {
+				this.logger.warn(`Local module not found: ${key}`);
+				return;
+			}
+			findRequires(moduleAst, (node) => {
+				const requestPath = firstStringArgument(node);
+				if (!requestPath) return node;
 				if (![
 					"/",
 					"./",
 					"../"
-				].some((x) => path.indexOf(x) == 0)) return node;
-				path = resolvePath(key, path);
-				if (path.slice(-3) == ".js") path = path.slice(0, -3);
-				if (!modules[path]) path = path + ".js";
-				requiresOrder.push(path);
-				let _module = modules[path];
-				if (!_module) {
-					this.logger.warn(`Local module not found: ${path}`);
+				].some((prefix) => requestPath.startsWith(prefix))) return node;
+				let requiredPath = resolvePath(key, requestPath);
+				if (requiredPath.slice(-3) == ".js") requiredPath = requiredPath.slice(0, -3);
+				if (!normalizedModules[requiredPath]) requiredPath = requiredPath + ".js";
+				let requiredModule = normalizedModules[requiredPath];
+				if (!requiredModule) {
+					this.logger.warn(`Local module not found: ${requiredPath}`);
 					return node;
 				}
-				if (stack.indexOf(path) == -1) walkDeps(path, stack.concat(path));
-				else this.logger.warn("Skipping cyclic depedency: " + path);
-				if (!processedModules[path]) {
-					const id = processedModules[path] = "$$module$" + rng.get();
-					declaration.declarations.push({
+				if (stack.indexOf(requiredPath) == -1) walkDeps(requiredPath, stack.concat(requiredPath));
+				else this.logger.warn("Skipping cyclic depedency: " + requiredPath);
+				if (!processedModules[requiredPath]) {
+					const id = "$$module$" + rng.get();
+					processedModules[requiredPath] = id;
+					declarationDeclarations.push({
 						type: "VariableDeclarator",
 						id: {
 							type: "Identifier",
@@ -628,7 +685,7 @@ var Modules = class {
 							properties: []
 						}
 					});
-					_module = this.replaceExportsReferences(_module, {
+					requiredModule = this.replaceExportsReferences(requiredModule, {
 						type: "Identifier",
 						name: id
 					});
@@ -641,23 +698,25 @@ var Modules = class {
 								params: [],
 								body: {
 									type: "BlockStatement",
-									body: _module.body
+									body: nodeBody$2(requiredModule)
 								}
 							},
 							arguments: []
 						},
-						toildefender$module: path
+						toildefender$module: requiredPath
 					});
 				}
 				return {
 					type: "Identifier",
-					name: processedModules[path]
+					name: processedModules[requiredPath]
 				};
 			});
 		};
-		walkDeps(mainKey);
-		if (declaration.declarations.length > 0) modules[mainKey].body = [declaration].concat(embeds).concat(modules[mainKey].body);
-		return modules[mainKey];
+		walkDeps(normalizedMainKey);
+		const mainModule = normalizedModules[normalizedMainKey];
+		assert.ok(mainModule, `Main module not found: ${normalizedMainKey}`);
+		if (declarationDeclarations.length > 0) setNodeBody$1(mainModule, [declaration].concat(embeds).concat(nodeBody$2(mainModule)));
+		return mainModule;
 	}
 };
 //#endregion
@@ -744,6 +803,72 @@ function toildefender$fromCharCodes() {
 
 `;
 var ANON_METHOD_ID = "toildefender$anonymousMethodId";
+function nodeFields$6(node) {
+	return node;
+}
+function astArray$2(value) {
+	return Array.isArray(value) ? value : [];
+}
+function childNode$6(node, key) {
+	const value = nodeFields$6(node)[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function setChildValue$1(node, key, value) {
+	nodeFields$6(node)[key] = value;
+}
+function nodeName$8(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function setNodeName$3(node, name) {
+	node.name = name;
+}
+function nodeComputed$4(node) {
+	return node.computed === true;
+}
+function nodeFlag$5(node, key) {
+	return node[key] === true;
+}
+function nodeValue$4(node) {
+	return nodeFields$6(node).value;
+}
+function setNodeValue$1(node, value) {
+	nodeFields$6(node).value = value;
+}
+function nodeParams$5(node) {
+	return astArray$2(nodeFields$6(node).params);
+}
+function setNodeParams(node, params) {
+	nodeFields$6(node).params = params;
+}
+function mutableBody$4(node) {
+	const body = nodeFields$6(node).body;
+	if (Array.isArray(body)) return body;
+	const nextBody = [];
+	nodeFields$6(node).body = nextBody;
+	return nextBody;
+}
+function functionBody(method) {
+	return childNode$6(method, "body") || {
+		type: "BlockStatement",
+		body: []
+	};
+}
+function anonName(node) {
+	const value = nodeFields$6(node)[ANON_METHOD_ID];
+	return typeof value == "string" ? value : null;
+}
+function defineAnonName(node) {
+	const existing = anonName(node);
+	if (existing) return existing;
+	const value = `toildefender$anon$${utils_default.hash(node)}`;
+	Object.defineProperty(node, ANON_METHOD_ID, {
+		configurable: false,
+		enumerable: false,
+		value
+	});
+	return value;
+}
 /**
 * Wrap function with toildefender$bind.
 * @param {Identifier} Function identifier
@@ -762,27 +887,22 @@ function createMethodStub(id) {
 }
 function anonymousMethodName(node) {
 	assert.equal(node.type, "FunctionExpression");
-	if (!node[ANON_METHOD_ID]) Object.defineProperty(node, ANON_METHOD_ID, {
-		configurable: false,
-		enumerable: false,
-		value: `toildefender$anon$${utils_default.hash(node)}`
-	});
-	return node[ANON_METHOD_ID];
+	return defineAnonName(node);
 }
 function functionDeclarationName(node) {
 	assert.equal(node.type, "FunctionDeclaration");
-	if (!node.id || !node.id.name) {
-		if (!node[ANON_METHOD_ID]) Object.defineProperty(node, ANON_METHOD_ID, {
-			configurable: false,
-			enumerable: false,
-			value: `toildefender$anon$${utils_default.hash(node)}`
-		});
-		node.id = {
+	let id = childNode$6(node, "id");
+	const name = nodeName$8(id);
+	if (!id || !name) {
+		const generated = defineAnonName(node);
+		id = {
 			type: "Identifier",
-			name: node[ANON_METHOD_ID]
+			name: generated
 		};
+		setChildValue$1(node, "id", id);
+		return generated;
 	}
-	return node.id.name;
+	return name;
 }
 function isReferenceIdentifier$2(node, stack) {
 	const parentFrame = stack[1];
@@ -792,17 +912,17 @@ function isReferenceIdentifier$2(node, stack) {
 	if ((parent.type == "FunctionDeclaration" || parent.type == "FunctionExpression") && (key == "id" || key == "params")) return false;
 	if (parent.type == "VariableDeclarator" && key == "id") return false;
 	if (parent.type == "CatchClause" && key == "param") return false;
-	if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) return false;
-	if (parent.type == "Property" && key == "key" && parent.computed === false) return false;
+	if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && !nodeComputed$4(parent)) return false;
+	if (parent.type == "Property" && key == "key" && !nodeComputed$4(parent)) return false;
 	if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") return false;
 	return true;
 }
 function renameFunctionExpressionSelfReferences(node, name) {
 	assert.equal(node.type, "FunctionExpression");
-	if (!node.id || !node.id.name || node.id.name == name) return;
-	const oldName = node.id.name;
-	traverser_default.traverse(node.body, [], (child, stack) => {
-		if (child.type == "Identifier" && child.name == oldName && isReferenceIdentifier$2(child, stack)) child.name = name;
+	const oldName = nodeName$8(childNode$6(node, "id"));
+	if (!oldName || oldName == name) return;
+	traverser_default.traverse(functionBody(node), [], (child, stack) => {
+		if (child.type == "Identifier" && nodeName$8(child) == oldName && isReferenceIdentifier$2(child, stack)) setNodeName$3(child, name);
 		return child;
 	});
 }
@@ -810,7 +930,7 @@ function isClassMethodFunction$1(stack) {
 	return stack.some((frame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
 }
 function isNumericVmInternalFunction$3(node, stack) {
-	return node.toildefender$numericVmInternal === true || stack.some((frame) => frame.node && frame.node.toildefender$numericVmInternal === true);
+	return nodeFlag$5(node, "toildefender$numericVmInternal") || stack.some((frame) => nodeFlag$5(frame.node, "toildefender$numericVmInternal"));
 }
 /**
 * Get index of argument in function.
@@ -821,7 +941,8 @@ function isNumericVmInternalFunction$3(node, stack) {
 function getArgumentIndex(method, identifier) {
 	assert.ok(estest_default.isFunction(method));
 	assert.equal(identifier.type, "Identifier");
-	return _.findIndex(method.params, (x) => x.name == identifier.name);
+	const name = nodeName$8(identifier);
+	return nodeParams$5(method).findIndex((param) => nodeName$8(param) == name);
 }
 function rawArgumentsIdentifier() {
 	return {
@@ -829,6 +950,12 @@ function rawArgumentsIdentifier() {
 		name: "arguments",
 		toildefender$rawArguments: true
 	};
+}
+function acquiredReferences(scopeManager, method) {
+	const manager = scopeManager;
+	if (typeof manager.acquire != "function") return [];
+	const scope = manager.acquire(method);
+	return scope ? scope.references : [];
 }
 var Methods = class {
 	logger;
@@ -842,7 +969,7 @@ var Methods = class {
 	addCustomBind(ast) {
 		assert.ok(estest_default.isNode(ast));
 		const code = esprima.parseScript(METHODS_INJECT);
-		ast.body.splice.apply(ast.body, [0, 0].concat(code.body));
+		mutableBody$4(ast).splice(0, 0, ...mutableBody$4(code));
 	}
 	/**
 	* Checks whether a method refers to the "arguments" array.
@@ -853,7 +980,7 @@ var Methods = class {
 	methodRefersToArguments(method, scopeManager) {
 		assert.ok(estest_default.isFunction(method));
 		assert.ok(scopeManager);
-		return scopeManager.acquire(method).references.some((reference) => !utils_default.isResolvedReference(reference) && reference.identifier.name == "arguments");
+		return acquiredReferences(scopeManager, method).some((reference) => !utils_default.isResolvedReference(reference) && nodeName$8(reference.identifier) == "arguments");
 	}
 	/**
 	* Inserts code to copy/slice arguments from the arguments array like
@@ -866,7 +993,7 @@ var Methods = class {
 	removeFirstArguments(method, num) {
 		assert.ok(estest_default.isFunction(method));
 		assert.equal(typeof num, "number");
-		method.body.body.splice(0, 0, {
+		mutableBody$4(functionBody(method)).splice(0, 0, {
 			type: "VariableDeclaration",
 			kind: "var",
 			declarations: [{
@@ -930,18 +1057,22 @@ var Methods = class {
 				methods.push(node);
 				return {
 					type: "ExpressionStatement",
-					expression: createMethodStub(node.id)
+					expression: createMethodStub(childNode$6(node, "id") || {
+						type: "Identifier",
+						name: functionDeclarationName(node)
+					})
 				};
 			} else if (node.type == "FunctionExpression" && !isClassMethodFunction$1(stack)) {
 				const id = anonymousMethodName(node);
 				renameFunctionExpressionSelfReferences(node, id);
-				methods.push(_.assign(node, {
+				Object.assign(node, {
 					type: "FunctionDeclaration",
 					id: {
 						type: "Identifier",
 						name: id
 					}
-				}));
+				});
+				methods.push(node);
 				return createMethodStub({
 					type: "Identifier",
 					name: id
@@ -962,10 +1093,10 @@ var Methods = class {
 	*/
 	replaceArgumentReferences(method, useReassignedVariable) {
 		assert.ok(estest_default.isFunction(method));
-		traverser_default.traverse(method.body, [], (node, stack) => {
+		traverser_default.traverse(functionBody(method), [], (node, stack) => {
 			if (node.type == "Identifier") {
 				const nestedFunction = stack.some((frame) => estest_default.isFunction(frame.node));
-				if (useReassignedVariable && node.name == "arguments" && !node.toildefender$rawArguments && !nestedFunction) return {
+				if (useReassignedVariable && nodeName$8(node) == "arguments" && !nodeFlag$5(node, "toildefender$rawArguments") && !nestedFunction) return {
 					type: "Identifier",
 					name: "toildefender$bareArguments"
 				};
@@ -985,7 +1116,7 @@ var Methods = class {
 			}
 			return node;
 		});
-		method.params = [];
+		setNodeParams(method, []);
 		return method;
 	}
 	/**
@@ -1002,7 +1133,9 @@ var Methods = class {
 		assert.equal(typeof methodEntryExitPoints, "object");
 		traverser_default.traverse(ast, [], (node, stack) => {
 			if (isNumericVmInternalFunction$3(node, stack)) return node;
-			if (node.type == "Identifier" && methodEntryExitPoints[node.name] && methodEntryExitPoints[node.name].entry) return {
+			const name = nodeName$8(node);
+			const entryPoint = name ? methodEntryExitPoints[name] : void 0;
+			if (node.type == "Identifier" && entryPoint?.entry) return {
 				type: "CallExpression",
 				callee: {
 					type: "Identifier",
@@ -1010,10 +1143,10 @@ var Methods = class {
 				},
 				arguments: [{
 					type: "Identifier",
-					name: methodEntryExitPoints[node.name].dispatcher || "main"
+					name: entryPoint.dispatcher || "main"
 				}, {
 					type: "Identifier",
-					name: methodEntryExitPoints[node.name].entry
+					name: entryPoint.entry
 				}]
 			};
 			return node;
@@ -1030,15 +1163,60 @@ var Methods = class {
 	bumpArgumentsIndices(method, inc) {
 		assert.ok(estest_default.isFunction(method));
 		assert.equal(typeof inc, "number");
-		traverser_default.traverse(method.body, [], (node, stack) => {
-			if (node.type == "MemberExpression" && node.object.type == "Identifier" && node.object.name == "toildefender$arguments") node.property.value += inc;
-			if (node.toildefender$removeFirstArguments) node.value += inc;
+		traverser_default.traverse(functionBody(method), [], (node) => {
+			const object = childNode$6(node, "object");
+			if (node.type == "MemberExpression" && object?.type == "Identifier" && nodeName$8(object) == "toildefender$arguments") {
+				const property = childNode$6(node, "property");
+				const value = property ? nodeValue$4(property) : null;
+				if (typeof value == "number" && property) setNodeValue$1(property, value + inc);
+			}
+			if (nodeFlag$5(node, "toildefender$removeFirstArguments")) {
+				const value = nodeValue$4(node);
+				if (typeof value == "number") setNodeValue$1(node, value + inc);
+			}
 			return node;
 		});
 	}
 };
 //#endregion
 //#region src/processors/variables.ts
+function nodeFields$5(node) {
+	return node;
+}
+function astArray$1(value) {
+	return Array.isArray(value) ? value : [];
+}
+function childNode$5(node, key) {
+	const value = nodeFields$5(node)[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function setChildValue(node, key, value) {
+	nodeFields$5(node)[key] = value;
+}
+function nodeName$7(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function setNodeName$2(node, name) {
+	node.name = name;
+}
+function nodeComputed$3(node) {
+	return node.computed === true;
+}
+function nodeFlag$4(node, key) {
+	return node[key] === true;
+}
+function nodeParams$4(node) {
+	return astArray$1(nodeFields$5(node).params);
+}
+function parentOf$1(node) {
+	const parent = node.toildefender$parent;
+	return estest_default.isNode(parent) ? parent : null;
+}
+function scopeList$1(scopeManager) {
+	const scopes = scopeManager.scopes;
+	return Array.isArray(scopes) ? scopes : [];
+}
 function isReferenceIdentifier$1(node, stack) {
 	const parentFrame = stack[1];
 	if (!parentFrame) return true;
@@ -1048,40 +1226,42 @@ function isReferenceIdentifier$1(node, stack) {
 	if ((parent.type == "ClassDeclaration" || parent.type == "ClassExpression") && key == "id") return false;
 	if (parent.type == "VariableDeclarator" && key == "id") return false;
 	if (parent.type == "CatchClause" && key == "param") return false;
-	if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) return false;
-	if (parent.type == "Property" && key == "key" && parent.computed === false) return false;
-	if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && parent.computed === false) return false;
+	if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && !nodeComputed$3(parent)) return false;
+	if (parent.type == "Property" && key == "key" && !nodeComputed$3(parent)) return false;
+	if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && !nodeComputed$3(parent)) return false;
 	if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") return false;
 	return true;
 }
 function functionExpressionUsesOwnName(node) {
 	assert.equal(node.type, "FunctionExpression");
-	if (!node.id) return false;
-	const name = node.id.name;
+	const name = nodeName$7(childNode$5(node, "id"));
+	if (!name) return false;
+	const body = childNode$5(node, "body");
+	if (!body) return false;
 	let used = false;
-	traverser_default.traverse(node.body, [], (child, stack) => {
-		if (child.type == "Identifier" && child.name == name && isReferenceIdentifier$1(child, stack)) used = true;
+	traverser_default.traverse(body, [], (child, stack) => {
+		if (child.type == "Identifier" && nodeName$7(child) == name && isReferenceIdentifier$1(child, stack)) used = true;
 		return child;
 	});
 	return used;
 }
 function isClassMethodScope$1(scope) {
-	let node = scope && scope.block;
+	let node = scope.block;
 	while (node) {
 		if (node.type == "MethodDefinition" || node.type == "ClassBody") return true;
-		node = node.toildefender$parent;
+		node = parentOf$1(node);
 	}
 	return false;
 }
 function isNumericVmInternalNode$2(node) {
 	while (node) {
-		if (node.toildefender$numericVmInternal === true) return true;
-		node = node.toildefender$parent;
+		if (nodeFlag$4(node, "toildefender$numericVmInternal")) return true;
+		node = parentOf$1(node);
 	}
 	return false;
 }
 function isNumericVmInternalScope$1(scope) {
-	return isNumericVmInternalNode$2(scope && scope.block);
+	return isNumericVmInternalNode$2(scope.block);
 }
 function isNumericVmInternalVariable(variable) {
 	return variable.defs.some((def) => isNumericVmInternalNode$2(def.node));
@@ -1101,9 +1281,9 @@ var Variables = class {
 	* @returns {Node} Root node
 	*/
 	removeFunctionExpressionIds(ast) {
-		return traverser_default.traverse(ast, [], (node, stack) => {
+		return traverser_default.traverse(ast, [], (node) => {
 			if (isNumericVmInternalNode$2(node)) return node;
-			if (node.type == "FunctionExpression" && node.id && !functionExpressionUsesOwnName(node)) node.id = null;
+			if (node.type == "FunctionExpression" && childNode$5(node, "id") && !functionExpressionUsesOwnName(node)) setChildValue(node, "id", null);
 			return node;
 		});
 	}
@@ -1118,7 +1298,7 @@ var Variables = class {
 	functionDeclarationToExpression(ast, scopeManager) {
 		assert.ok(estest_default.isNode(ast));
 		this.esutils.setParentsRecursive(ast);
-		scopeManager.scopes.forEach((scope) => {
+		scopeList$1(scopeManager).forEach((scope) => {
 			if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope$1(scope) || isNumericVmInternalScope$1(scope)) return;
 			scope.variables.forEach((variable) => {
 				variable.defs.forEach((def) => {
@@ -1137,15 +1317,15 @@ var Variables = class {
 								kind: "var",
 								declarations: [{
 									type: "VariableDeclarator",
-									id: def.node.id,
+									id: childNode$5(def.node, "id"),
 									init: {
 										type: "FunctionExpression",
-										params: def.node.params,
-										body: def.node.body,
-										generator: def.node.generator === true,
-										expression: def.node.expression === true,
-										async: def.node.async === true,
-										toildefender$numericVmInternal: def.node.toildefender$numericVmInternal === true
+										params: nodeParams$4(def.node),
+										body: childNode$5(def.node, "body"),
+										generator: nodeFlag$4(def.node, "generator"),
+										expression: nodeFlag$4(def.node, "expression"),
+										async: nodeFlag$4(def.node, "async"),
+										toildefender$numericVmInternal: nodeFlag$4(def.node, "toildefender$numericVmInternal")
 									}
 								}]
 							});
@@ -1176,9 +1356,9 @@ var Variables = class {
 			usedNames.add(name);
 			return name;
 		}
-		scopeManager.scopes.forEach((scope) => {
+		scopeList$1(scopeManager).forEach((scope) => {
 			if (isClassMethodScope$1(scope) || isNumericVmInternalScope$1(scope)) return;
-			if (scope.isStatic()) {
+			if (scope.isStatic?.()) {
 				scope.variables.sort((a, b) => {
 					if (a.tainted) return 1;
 					if (b.tainted) return -1;
@@ -1190,8 +1370,8 @@ var Variables = class {
 					if (variable.defs.some((def) => def.type == "ClassName")) continue;
 					if (variable.tainted) continue;
 					if (variable.identifiers.length === 0) continue;
-					for (const def of variable.identifiers) def.name = name;
-					for (const ref of variable.references.filter((ref) => ref.resolved === variable)) ref.identifier.name = name;
+					for (const def of variable.identifiers) setNodeName$2(def, name);
+					for (const ref of variable.references.filter((ref) => ref.resolved === variable)) setNodeName$2(ref.identifier, name);
 				}
 			}
 		});
@@ -1211,13 +1391,13 @@ var Variables = class {
 	*/
 	redefineParameters(ast, scopeManager) {
 		const rng = new utils_default.UniqueRandomAlpha(3);
-		scopeManager.scopes.forEach((scope) => {
+		scopeList$1(scopeManager).forEach((scope) => {
 			if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope$1(scope) || isNumericVmInternalScope$1(scope)) return;
 			scope.variables.forEach((variable) => {
 				if (isNumericVmInternalVariable(variable)) return;
 				variable.defs.forEach((def) => {
 					if (def.type == "Parameter") {
-						assert(def.name.type == "Identifier");
+						assert(def.name?.type == "Identifier");
 						const name = "$$arg$" + rng.get();
 						this.esutils.insertIntoScope(scope, {
 							type: "VariableDeclaration",
@@ -1232,7 +1412,7 @@ var Variables = class {
 							}]
 						});
 						variable.references.forEach((reference) => {
-							reference.identifier.name = name;
+							setNodeName$2(reference.identifier, name);
 						});
 					}
 				});
@@ -1242,29 +1422,40 @@ var Variables = class {
 };
 //#endregion
 //#region src/processors/scopes.ts
-function isClassMethodFunction(stack) {
-	return stack.some((frame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+function nodeFields$4(node) {
+	return node;
 }
-function isClassMethodScope(scope) {
-	let node = scope && scope.block;
-	while (node) {
-		if (node.type == "MethodDefinition" || node.type == "ClassBody") return true;
-		node = node.toildefender$parent;
-	}
-	return false;
+function nodeArray$4(value) {
+	return Array.isArray(value) ? value : [];
 }
-function isNumericVmInternalNode$1(node) {
-	while (node) {
-		if (node.toildefender$numericVmInternal === true) return true;
-		node = node.toildefender$parent;
-	}
-	return false;
+function childNode$4(node, key) {
+	const value = nodeFields$4(node)[key];
+	return estest_default.isNode(value) ? value : null;
 }
-function isNumericVmInternalFunction$2(stack) {
-	return stack.some((frame) => frame.node && isNumericVmInternalNode$1(frame.node));
+function setNodeField$3(node, key, value) {
+	nodeFields$4(node)[key] = value;
 }
-function isNumericVmInternalScope(scope) {
-	return isNumericVmInternalNode$1(scope && scope.block);
+function nodeName$6(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function nodeComputed$2(node) {
+	return node.computed === true;
+}
+function nodeFlag$3(node, key) {
+	return node[key] === true;
+}
+function nodeParams$3(node) {
+	return nodeArray$4(nodeFields$4(node).params);
+}
+function parentOf(node) {
+	const parent = node?.toildefender$parent;
+	return estest_default.isNode(parent) ? parent : null;
+}
+function scopeManagerObject(scopeManager) {
+	const manager = scopeManager;
+	if (Array.isArray(manager.scopes)) return manager;
+	return { scopes: [] };
 }
 function scopeReference(scopeVarName, index) {
 	return {
@@ -1281,6 +1472,30 @@ function scopeReference(scopeVarName, index) {
 		toildefender$scopeObjectReference: true
 	};
 }
+function isClassMethodFunction(stack) {
+	return stack.some((frame) => frame.node.type == "MethodDefinition" || frame.node.type == "ClassBody");
+}
+function isClassMethodScope(scope) {
+	let node = scope.block;
+	while (node) {
+		if (node.type == "MethodDefinition" || node.type == "ClassBody") return true;
+		node = parentOf(node);
+	}
+	return false;
+}
+function isNumericVmInternalNode$1(node) {
+	while (node) {
+		if (nodeFlag$3(node, "toildefender$numericVmInternal")) return true;
+		node = parentOf(node);
+	}
+	return false;
+}
+function isNumericVmInternalFunction$2(stack) {
+	return stack.some((frame) => isNumericVmInternalNode$1(frame.node));
+}
+function isNumericVmInternalScope(scope) {
+	return isNumericVmInternalNode$1(scope.block);
+}
 function isReferenceIdentifier(node, stack) {
 	const parentFrame = stack[1];
 	if (!parentFrame) return true;
@@ -1290,9 +1505,9 @@ function isReferenceIdentifier(node, stack) {
 	if ((parent.type == "ClassDeclaration" || parent.type == "ClassExpression") && key == "id") return false;
 	if (parent.type == "VariableDeclarator" && key == "id") return false;
 	if (parent.type == "CatchClause" && key == "param") return false;
-	if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && parent.computed === false) return false;
-	if (parent.type == "Property" && key == "key" && parent.computed === false) return false;
-	if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && parent.computed === false) return false;
+	if ((parent.type == "MemberExpression" || parent.type == "Property") && key == "property" && !nodeComputed$2(parent)) return false;
+	if (parent.type == "Property" && key == "key" && !nodeComputed$2(parent)) return false;
+	if ((parent.type == "MethodDefinition" || parent.type == "PropertyDefinition" || parent.type == "FieldDefinition") && key == "key" && !nodeComputed$2(parent)) return false;
 	if ((parent.type == "LabeledStatement" || parent.type == "BreakStatement" || parent.type == "ContinueStatement") && key == "label") return false;
 	return true;
 }
@@ -1310,13 +1525,13 @@ function markPropertyValueReplacement(stack) {
 	const parentFrame = stack[1];
 	if (!parentFrame) return;
 	const parent = parentFrame.node;
-	if (parent.type == "Property" && parent.shorthand === true && parentFrame.key == "value") parent.shorthand = false;
+	if (parent.type == "Property" && nodeFlag$3(parent, "shorthand") && parentFrame.key == "value") setNodeField$3(parent, "shorthand", false);
 }
 function isReferenceInsideNestedFunction(scopeBlock, identifier) {
-	let current = identifier && identifier.toildefender$parent;
+	let current = parentOf(identifier);
 	while (current && current != scopeBlock) {
 		if (estest_default.isFunction(current)) return true;
-		current = current.toildefender$parent;
+		current = parentOf(current);
 	}
 	return false;
 }
@@ -1335,6 +1550,25 @@ function hashString32(value) {
 	}
 	return h >>> 0;
 }
+function cloneReplacement(node) {
+	assert.ok(node);
+	return utils_default.cloneISwearIKnowWhatImDoing(node);
+}
+function ancestorDistance(ancestor, node) {
+	let distance = 0;
+	let current = node;
+	while (current) {
+		if (current == ancestor) return distance;
+		current = parentOf(current);
+		distance += 1;
+	}
+	return -1;
+}
+function variableIndex(indexes, variable) {
+	const index = indexes.get(variable);
+	if (typeof index != "number") throw new Error(`Missing scope index for ${variable.name}`);
+	return index;
+}
 var Scopes = class {
 	logger;
 	esutils;
@@ -1352,26 +1586,23 @@ var Scopes = class {
 	* @param {Node} ast Root node
 	* @param {ScopeManager} scopeManager Scope manager
 	*/
-	createScopeObjects(ast, scopeManager, options) {
+	createScopeObjects(ast, scopeManager, options = {}) {
 		assert.ok(estest_default.isNode(ast));
 		this.esutils.setParentsRecursive(ast);
-		options = options || {};
 		const ratio = normalizeRatio$1(options.ratio);
 		const seed = options.seed || "toildefender-scope";
 		const forceProgram = options.forceProgram === true;
-		const scopes = scopeManager.acquireAll(ast);
+		const manager = scopeManagerObject(scopeManager);
+		const scopes = typeof manager.acquireAll == "function" ? manager.acquireAll(ast) : manager.scopes;
 		const rngAlpha = new utils_default.UniqueRandomAlpha(3);
 		const replacements = /* @__PURE__ */ new WeakMap();
 		const referencesByVariable = /* @__PURE__ */ new Map();
 		const fallbackReplacementsByName = /* @__PURE__ */ new Map();
 		const scopeBlocks = /* @__PURE__ */ new WeakSet();
 		scopes.forEach((scope) => {
-			if (scope && scope.block) scopeBlocks.add(scope.block);
+			scopeBlocks.add(scope.block);
 		});
-		function cloneReplacement(node) {
-			return utils_default.cloneISwearIKnowWhatImDoing(node);
-		}
-		function addFallbackReplacement(name, replacement, block, scopeDecl) {
+		const addFallbackReplacement = (name, replacement, block, scopeDecl) => {
 			let entries = fallbackReplacementsByName.get(name);
 			if (!entries) {
 				entries = [];
@@ -1382,24 +1613,14 @@ var Scopes = class {
 				scopeDecl,
 				replacement
 			});
-		}
-		function ancestorDistance(ancestor, node) {
-			let distance = 0;
-			let current = node;
-			while (current) {
-				if (current == ancestor) return distance;
-				current = current.toildefender$parent;
-				distance += 1;
-			}
-			return -1;
-		}
-		function fallbackReplacementForName(name, node) {
+		};
+		const fallbackReplacementForName = (name, node) => {
 			const entries = fallbackReplacementsByName.get(name);
 			if (!entries) return null;
 			let best = null;
 			let bestDistance = Infinity;
 			entries.forEach((entry) => {
-				const liveBlock = entry.scopeDecl && entry.scopeDecl.toildefender$parent;
+				const liveBlock = parentOf(entry.scopeDecl);
 				let distance = liveBlock ? ancestorDistance(liveBlock, node) : -1;
 				if (distance < 0) distance = ancestorDistance(entry.block, node);
 				if (distance >= 0 && distance < bestDistance) {
@@ -1407,19 +1628,18 @@ var Scopes = class {
 					bestDistance = distance;
 				}
 			});
-			if (best) return best;
-			return null;
-		}
-		function addResolvedReference(variable, reference) {
-			if (!variable || !reference || !reference.identifier) return;
+			return best;
+		};
+		const addResolvedReference = (variable, reference) => {
+			if (!variable) return;
 			let references = referencesByVariable.get(variable);
 			if (!references) {
 				references = /* @__PURE__ */ new Set();
 				referencesByVariable.set(variable, references);
 			}
 			references.add(reference);
-		}
-		scopeManager.scopes.forEach((scope) => {
+		};
+		manager.scopes.forEach((scope) => {
 			scope.variables.forEach((variable) => {
 				variable.references.forEach((reference) => addResolvedReference(variable, reference));
 			});
@@ -1430,32 +1650,30 @@ var Scopes = class {
 				addResolvedReference(reference.resolved, reference);
 			});
 		});
-		function referencesFor(variable) {
-			let references = referencesByVariable.get(variable);
-			references = references ? Array.from(references) : variable.references;
-			return references.filter((reference) => reference.resolved === variable);
-		}
-		function shouldFlattenScope(scope, movableVariables, index) {
-			if (forceProgram && scope && scope.block && scope.block.type == "Program") return true;
+		const referencesFor = (variable) => {
+			const references = referencesByVariable.get(variable);
+			return (references ? Array.from(references) : variable.references).filter((reference) => reference.resolved === variable);
+		};
+		const shouldFlattenScope = (scope, movableVariables, index) => {
+			if (forceProgram && scope.block.type == "Program") return true;
 			if (movableVariables.some((variable) => referencesFor(variable).some((reference) => isReferenceInsideNestedFunction(scope.block, reference.identifier)))) return true;
 			if (ratio >= 1) return true;
 			if (ratio <= 0) return false;
-			const blockType = scope && scope.block && scope.block.type || "";
 			const variableNames = movableVariables.map((variable) => variable.name).sort().join(",");
-			return hashString32(`${seed}:${index}:${scope.type}:${blockType}:${variableNames}`) / 4294967296 < ratio;
-		}
-		function rewriteKnownReferences(node) {
-			if (!node) return node;
+			return hashString32(`${seed}:${index}:${scope.type || ""}:${scope.block.type}:${variableNames}`) / 4294967296 < ratio;
+		};
+		const rewriteKnownReferences = (node) => {
 			return traverser_default.traverse(node, [], (child, stack) => {
 				if (isNumericVmInternalFunction$2(stack)) return child;
-				if (child.type == "Identifier" && replacements.has(child)) {
+				const replacement = replacements.get(child);
+				if (child.type == "Identifier" && replacement) {
 					markPropertyValueReplacement(stack);
-					return cloneReplacement(replacements.get(child));
+					return cloneReplacement(replacement);
 				}
 				return child;
 			});
-		}
-		scopeManager.scopes.forEach((scope, scopeIndex) => {
+		};
+		manager.scopes.forEach((scope, scopeIndex) => {
 			if (!this.esutils.canInsertIntoScope(scope) || isClassMethodScope(scope) || isNumericVmInternalScope(scope)) return;
 			const movableVariables = scope.variables.filter(isMovableVariable);
 			if (movableVariables.length == 0) return;
@@ -1468,7 +1686,7 @@ var Scopes = class {
 				indexes.set(variable, counter++);
 			});
 			movableVariables.forEach((variable) => {
-				const index = indexes.get(variable);
+				const index = variableIndex(indexes, variable);
 				variable.defs.forEach((def) => {
 					if (def.type == "Variable") {
 						const replacement = scopeReference(scopeVarName, index);
@@ -1488,7 +1706,7 @@ var Scopes = class {
 							},
 							arguments: [{
 								type: "Identifier",
-								name: reference.identifier.name
+								name: nodeName$6(reference.identifier) || variable.name
 							}, {
 								type: "Identifier",
 								name: scopeVarName
@@ -1503,7 +1721,7 @@ var Scopes = class {
 					if (isNumericVmInternalFunction$2(stack)) return node;
 					if (isInsideNestedScope(stack, scope.block, scopeBlocks)) return node;
 					if (node.type == "Identifier" && isReferenceIdentifier(node, stack)) {
-						const replacement = localReplacementsByName.get(node.name);
+						const replacement = localReplacementsByName.get(nodeName$6(node) || "");
 						if (replacement) {
 							markPropertyValueReplacement(stack);
 							return cloneReplacement(replacement);
@@ -1533,37 +1751,28 @@ var Scopes = class {
 				addFallbackReplacement(name, replacement, scope.block, scopeDecl);
 			});
 			movableVariables.forEach((variable) => {
-				const index = indexes.get(variable);
+				const index = variableIndex(indexes, variable);
 				variable.defs.forEach((def) => {
 					if (def.type == "Variable") {
-						assert(def.parent.type == "VariableDeclaration");
-						def.parent.declarations = def.parent.declarations.filter((x) => x != def.node);
+						const parent = def.parent;
+						assert(parent.type == "VariableDeclaration");
+						const declarations = nodeArray$4(nodeFields$4(parent).declarations).filter((declarator) => declarator != def.node);
+						setNodeField$3(parent, "declarations", declarations);
 						const replacement = [];
-						if (def.node.init) replacement.push({
+						const init = childNode$4(def.node, "init");
+						if (init) replacement.push({
 							type: "ExpressionStatement",
 							expression: {
 								type: "AssignmentExpression",
 								operator: "=",
-								left: {
-									type: "MemberExpression",
-									object: {
-										type: "Identifier",
-										name: scopeVarName
-									},
-									property: {
-										type: "Literal",
-										value: index
-									},
-									computed: true,
-									toildefender$scopeObjectReference: true
-								},
-								right: rewriteKnownReferences(def.node.init)
+								left: scopeReference(scopeVarName, index),
+								right: rewriteKnownReferences(init)
 							}
 						});
-						if (def.parent.declarations.length > 0) replacement.push(def.parent);
-						if (replacement.length == 0) this.esutils.replaceNode(scope.block, def.parent, { type: "EmptyStatement" });
-						else if (replacement.length == 1) this.esutils.replaceNode(scope.block, def.parent, replacement[0]);
-						else this.esutils.replaceNode(scope.block, def.parent, {
+						if (declarations.length > 0) replacement.push(parent);
+						if (replacement.length == 0) this.esutils.replaceNode(scope.block, parent, { type: "EmptyStatement" });
+						else if (replacement.length == 1) this.esutils.replaceNode(scope.block, parent, replacement[0]);
+						else this.esutils.replaceNode(scope.block, parent, {
 							type: "BlockStatement",
 							body: replacement
 						});
@@ -1581,7 +1790,10 @@ var Scopes = class {
 								type: "AssignmentExpression",
 								operator: "=",
 								left: scopeReference(scopeVarName, index),
-								right: def.name
+								right: def.name || {
+									type: "Identifier",
+									name: variable.name
+								}
 							}
 						}, 1);
 						referencesFor(variable).forEach((reference) => {
@@ -1599,7 +1811,7 @@ var Scopes = class {
 			traverser_default.traverse(scope.block, [], (node, stack) => {
 				if (scope.block == node) return node;
 				if (isClassMethodFunction(stack) || isNumericVmInternalFunction$2(stack)) return node;
-				if (node.type.indexOf("Function") == 0) node.params.unshift({
+				if (node.type.indexOf("Function") == 0) nodeParams$3(node).unshift({
 					type: "Identifier",
 					name: scopeVarName
 				});
@@ -1620,8 +1832,8 @@ var Scopes = class {
 		this.esutils.setParentsRecursive(ast);
 		traverser_default.traverse(ast, [], (node, stack) => {
 			const parentFrame = stack[1];
-			if (node.type == "Identifier" && node.name.indexOf("$$var$") == 0 && parentFrame && parentFrame.node.type == "CallExpression" && parentFrame.key == "callee" && isReferenceIdentifier(node, stack)) {
-				const replacement = fallbackReplacementForName(node.name, node);
+			if (node.type == "Identifier" && (nodeName$6(node) || "").indexOf("$$var$") == 0 && parentFrame && parentFrame.node.type == "CallExpression" && parentFrame.key == "callee" && isReferenceIdentifier(node, stack)) {
+				const replacement = fallbackReplacementForName(nodeName$6(node) || "", node);
 				if (replacement) return cloneReplacement(replacement);
 			}
 			return node;
@@ -1630,13 +1842,83 @@ var Scopes = class {
 };
 //#endregion
 //#region src/processors/flattener.ts
+function nodeFields$3(node) {
+	return node;
+}
+function nodeArray$3(value) {
+	return Array.isArray(value) ? value : [];
+}
+function bodyArray$2(node) {
+	return nodeArray$3(nodeFields$3(node).body);
+}
+function mutableBody$3(node) {
+	const body = nodeFields$3(node).body;
+	if (Array.isArray(body)) return body;
+	const nextBody = [];
+	nodeFields$3(node).body = nextBody;
+	return nextBody;
+}
+function childNode$3(node, key) {
+	const value = nodeFields$3(node)[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function requiredChild$2(node, key) {
+	const child = childNode$3(node, key);
+	assert.ok(child, `Missing ${node.type}.${key}`);
+	return child;
+}
+function setNodeField$2(node, key, value) {
+	nodeFields$3(node)[key] = value;
+}
+function nodeName$5(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function setNodeName$1(node, name) {
+	node.name = name;
+}
+function nodeValue$3(node) {
+	return node?.value;
+}
+function setNodeValue(node, value) {
+	node.value = value;
+}
+function nodeFlag$2(node, key) {
+	return node[key] === true;
+}
+function nodeDeclarations$2(node) {
+	return nodeArray$3(nodeFields$3(node).declarations);
+}
+function switchCases(node) {
+	return nodeArray$3(nodeFields$3(node).cases);
+}
+function labelName(node) {
+	return nodeName$5(childNode$3(node, "label"));
+}
+function last(items) {
+	return items[items.length - 1];
+}
+function shuffled(items) {
+	const result = items.slice();
+	for (let i = result.length - 1; i > 0; i -= 1) {
+		const j = Math.floor(Math.random() * (i + 1));
+		const tmp = result[i];
+		result[i] = result[j];
+		result[j] = tmp;
+	}
+	return result;
+}
+function switchCaseTestValue(node) {
+	return nodeValue$3(childNode$3(node, "test"));
+}
 /**
 * Push a SwitchCase onto an array while removing all identical SwitchCases
 * @param {SwitchCase[]} arr
 * @param {SwitchCase} elem
 */
 function pushUniqSwitchCase(arr, elem) {
-	_.remove(arr, (x) => x.test.value == elem.test.value);
+	const value = switchCaseTestValue(elem);
+	for (let i = arr.length - 1; i >= 0; i -= 1) if (switchCaseTestValue(arr[i]) == value) arr.splice(i, 1);
 	arr.push(elem);
 }
 /**
@@ -1645,7 +1927,8 @@ function pushUniqSwitchCase(arr, elem) {
 * @returns {SwitchCase[]} New array of the shuffled cases
 */
 function shuffleSwitchCases(entries) {
-	let groups = [], stack = [];
+	const groups = [];
+	let stack = [];
 	function clearStack() {
 		if (stack.length > 0) {
 			groups.push(stack);
@@ -1653,13 +1936,13 @@ function shuffleSwitchCases(entries) {
 		}
 	}
 	entries.forEach((entry) => {
-		if (entry.consequent.some((x) => x.type == "BreakStatement")) {
+		if (bodyArray$2(entry).some((x) => x.type == "BreakStatement")) {
 			clearStack();
 			groups.push([entry]);
 		} else stack.push(entry);
 	});
 	clearStack();
-	return Array.prototype.concat.apply([], _.shuffle(groups));
+	return shuffled(groups).flat();
 }
 /**
 * Merge nested BlockStatements (BlockStatements containing other BlockStatements)
@@ -1668,16 +1951,19 @@ function shuffleSwitchCases(entries) {
 */
 function mergeNestedBlocks(node) {
 	assert(estest_default.isNode(node));
-	function getBlockBodys(node) {
-		if (node.type == "Program" || node.type == "BlockStatement") {
+	function getBlockBodies(child) {
+		if (child.type == "Program" || child.type == "BlockStatement") {
 			const stmts = [];
-			node.body.forEach((stmt) => utils_default.push(stmts, getBlockBodys(stmt)));
+			bodyArray$2(child).forEach((stmt) => {
+				stmts.push(...getBlockBodies(stmt));
+			});
 			return stmts;
-		} else return [node];
+		}
+		return [child];
 	}
 	return {
 		type: node.type,
-		body: getBlockBodys(node)
+		body: getBlockBodies(node)
 	};
 }
 /**
@@ -1686,7 +1972,8 @@ function mergeNestedBlocks(node) {
 * @returns {Statement[]} Array of Statements
 */
 function splitBlocks(nodes) {
-	let stack = [], output = [];
+	let stack = [];
+	const output = [];
 	for (let i = 0; i < nodes.length; ++i) if (estest_default.isCompoundStatement(nodes[i])) {
 		if (stack.length > 0) {
 			output.push({
@@ -1707,6 +1994,48 @@ function splitBlocks(nodes) {
 	});
 	return output;
 }
+function targetFor(targets, label) {
+	if (label) return targets.find((target) => target.label == label);
+	return last(targets);
+}
+function memberScopeName(node) {
+	if (node.type != "MemberExpression") return null;
+	const object = childNode$3(node, "object");
+	const property = childNode$3(node, "property");
+	const objectName = nodeName$5(object);
+	if (object?.type == "Identifier" && objectName?.startsWith("$$scope") && property?.type == "Literal" && typeof nodeValue$3(property) == "number") return objectName;
+	return null;
+}
+function expressionStatement(expression) {
+	return {
+		type: "ExpressionStatement",
+		expression
+	};
+}
+function stateAssignment(value) {
+	return expressionStatement({
+		type: "AssignmentExpression",
+		operator: "=",
+		left: {
+			type: "Identifier",
+			name: "state"
+		},
+		right: {
+			type: "Literal",
+			value
+		}
+	});
+}
+function switchCase(entry, consequent) {
+	return {
+		type: "SwitchCase",
+		test: {
+			type: "Literal",
+			value: entry
+		},
+		consequent
+	};
+}
 var Flattener = class {
 	logger;
 	rng;
@@ -1718,7 +2047,7 @@ var Flattener = class {
 	constructor(logger, rng) {
 		this.logger = logger;
 		this.rng = rng;
-		this.emitter = new events.EventEmitter();
+		this.emitter = new EventEmitter();
 		this.output = [];
 		this.handlers = [];
 		this.breaks = [];
@@ -1816,14 +2145,12 @@ var Flattener = class {
 	* @param {Object} options Program options
 	* @returns {Program} Switch construct program
 	*/
-	getProgram(entry, exit, options) {
+	getProgram(entry, exit, options = {}) {
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
-		options = options || {};
 		const name = options.name || "main";
 		const invoke = options.invoke !== false;
-		let body;
-		body = [{
+		const body = [{
 			type: "FunctionDeclaration",
 			id: {
 				type: "Identifier",
@@ -1912,7 +2239,7 @@ var Flattener = class {
 				this.transformSwitch(node, entry, exit);
 				break;
 			case "TryStatement":
-				if (node.handler && !node.finalizer) this.transformTryCatch(node, entry, exit);
+				if (childNode$3(node, "handler") && !childNode$3(node, "finalizer")) this.transformTryCatch(node, entry, exit);
 				else throw new Error("Not normalized");
 				break;
 			case "EmptyStatement": break;
@@ -1935,14 +2262,13 @@ var Flattener = class {
 		assert.ok(node.type == "Program" || node.type == "BlockStatement");
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
-		assert(node.type == "Program" || node.type == "BlockStatement");
 		node = mergeNestedBlocks(node);
-		let blocks;
-		blocks = splitBlocks(node.body);
+		const blocks = splitBlocks(bodyArray$2(node));
 		for (let i = 0; i < blocks.length; ++i) {
 			if (blocks[i].type == "LabeledStatement") {
-				blocks[i].body.label = blocks[i].label;
-				blocks[i] = blocks[i].body;
+				const body = requiredChild$2(blocks[i], "body");
+				setNodeField$2(body, "label", childNode$3(blocks[i], "label"));
+				blocks[i] = body;
 			}
 			if (!estest_default.isStatement(blocks[i])) console.warn(blocks[i].type + " is not a statement");
 			const partExit = i != blocks.length - 1 ? this.rng.get() : exit;
@@ -1962,52 +2288,20 @@ var Flattener = class {
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
 		const stmts = [];
-		if (!!node.body.every((stmt) => {
+		if (!!bodyArray$2(node).every((stmt) => {
 			assert(estest_default.isStatement(stmt), stmt.type + " is not a statement");
 			switch (stmt.type) {
 				case "BreakStatement": {
-					let break_;
-					if (stmt.label) break_ = _.find(this.breaks, (x) => x.label.name == stmt.label.name);
-					else break_ = _.last(this.breaks);
-					assert(break_ && break_.id, "No break target");
-					stmts.push({
-						type: "ExpressionStatement",
-						expression: {
-							type: "AssignmentExpression",
-							operator: "=",
-							left: {
-								type: "Identifier",
-								name: "state"
-							},
-							right: {
-								type: "Literal",
-								value: break_.id
-							}
-						}
-					});
+					const breakTarget = targetFor(this.breaks, labelName(stmt));
+					assert(breakTarget, "No break target");
+					stmts.push(stateAssignment(breakTarget.id));
 					stmts.push({ type: "BreakStatement" });
 					return false;
 				}
 				case "ContinueStatement": {
-					let continue_;
-					if (stmt.label) continue_ = _.find(this.continues, (x) => x.label.name == stmt.label.name);
-					else continue_ = _.last(this.continues);
-					assert(continue_ && continue_.id, "No continue target");
-					stmts.push({
-						type: "ExpressionStatement",
-						expression: {
-							type: "AssignmentExpression",
-							operator: "=",
-							left: {
-								type: "Identifier",
-								name: "state"
-							},
-							right: {
-								type: "Literal",
-								value: continue_.id
-							}
-						}
-					});
+					const continueTarget = targetFor(this.continues, labelName(stmt));
+					assert(continueTarget, "No continue target");
+					stmts.push(stateAssignment(continueTarget.id));
 					stmts.push({ type: "BreakStatement" });
 					return false;
 				}
@@ -2020,31 +2314,10 @@ var Flattener = class {
 					return true;
 			}
 		})) {
-			stmts.push({
-				type: "ExpressionStatement",
-				expression: {
-					type: "AssignmentExpression",
-					operator: "=",
-					left: {
-						type: "Identifier",
-						name: "state"
-					},
-					right: {
-						type: "Literal",
-						value: exit
-					}
-				}
-			});
+			stmts.push(stateAssignment(exit));
 			stmts.push({ type: "BreakStatement" });
 		}
-		this.output.push({
-			type: "SwitchCase",
-			test: {
-				type: "Literal",
-				value: entry
-			},
-			consequent: stmts
-		});
+		this.output.push(switchCase(entry, stmts));
 		this.emitter.emit("branch", entry);
 	}
 	/**
@@ -2058,40 +2331,34 @@ var Flattener = class {
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
 		const thenEntry = this.rng.get();
-		const elseEntry = node.alternate ? this.rng.get() : exit;
-		this.output.push({
-			type: "SwitchCase",
-			test: {
-				type: "Literal",
-				value: entry
-			},
-			consequent: [{
-				type: "ExpressionStatement",
-				expression: {
-					type: "AssignmentExpression",
-					operator: "=",
-					left: {
-						type: "Identifier",
-						name: "state"
+		const alternate = childNode$3(node, "alternate");
+		const elseEntry = alternate ? this.rng.get() : exit;
+		this.output.push(switchCase(entry, [{
+			type: "ExpressionStatement",
+			expression: {
+				type: "AssignmentExpression",
+				operator: "=",
+				left: {
+					type: "Identifier",
+					name: "state"
+				},
+				right: {
+					type: "ConditionalExpression",
+					test: requiredChild$2(node, "test"),
+					consequent: {
+						type: "Literal",
+						value: thenEntry
 					},
-					right: {
-						type: "ConditionalExpression",
-						test: node.test,
-						consequent: {
-							type: "Literal",
-							value: thenEntry
-						},
-						alternate: {
-							type: "Literal",
-							value: elseEntry
-						}
+					alternate: {
+						type: "Literal",
+						value: elseEntry
 					}
 				}
-			}, { type: "BreakStatement" }]
-		});
+			}
+		}, { type: "BreakStatement" }]));
 		this.emitter.emit("branch", entry);
-		this.transformStatement(node.consequent, thenEntry, exit);
-		if (node.alternate) this.transformStatement(node.alternate, elseEntry, exit);
+		this.transformStatement(requiredChild$2(node, "consequent"), thenEntry, exit);
+		if (alternate) this.transformStatement(alternate, elseEntry, exit);
 	}
 	/**
 	* Import WhileStatement into control flow table
@@ -2104,46 +2371,39 @@ var Flattener = class {
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
 		const bodyEntry = this.rng.get();
-		this.output.push({
-			type: "SwitchCase",
-			test: {
-				type: "Literal",
-				value: entry
-			},
-			consequent: [{
-				type: "ExpressionStatement",
-				expression: {
-					type: "AssignmentExpression",
-					operator: "=",
-					left: {
-						type: "Identifier",
-						name: "state"
+		this.output.push(switchCase(entry, [{
+			type: "ExpressionStatement",
+			expression: {
+				type: "AssignmentExpression",
+				operator: "=",
+				left: {
+					type: "Identifier",
+					name: "state"
+				},
+				right: {
+					type: "ConditionalExpression",
+					test: requiredChild$2(node, "test"),
+					consequent: {
+						type: "Literal",
+						value: bodyEntry
 					},
-					right: {
-						type: "ConditionalExpression",
-						test: node.test,
-						consequent: {
-							type: "Literal",
-							value: bodyEntry
-						},
-						alternate: {
-							type: "Literal",
-							value: exit
-						}
+					alternate: {
+						type: "Literal",
+						value: exit
 					}
 				}
-			}, { type: "BreakStatement" }]
-		});
+			}
+		}, { type: "BreakStatement" }]));
 		this.emitter.emit("branch", entry);
 		this.breaks.push({
-			label: node.label && node.label.name,
+			label: labelName(node),
 			id: exit
 		});
 		this.continues.push({
-			label: node.label && node.label.name,
+			label: labelName(node),
 			id: entry
 		});
-		this.transformBlock(node.body, bodyEntry, entry);
+		this.transformBlock(requiredChild$2(node, "body"), bodyEntry, entry);
 		this.breaks.pop();
 		this.continues.pop();
 	}
@@ -2158,46 +2418,39 @@ var Flattener = class {
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
 		const testEntry = this.rng.get();
-		this.output.push({
-			type: "SwitchCase",
-			test: {
-				type: "Literal",
-				value: testEntry
-			},
-			consequent: [{
-				type: "ExpressionStatement",
-				expression: {
-					type: "AssignmentExpression",
-					operator: "=",
-					left: {
-						type: "Identifier",
-						name: "state"
+		this.output.push(switchCase(testEntry, [{
+			type: "ExpressionStatement",
+			expression: {
+				type: "AssignmentExpression",
+				operator: "=",
+				left: {
+					type: "Identifier",
+					name: "state"
+				},
+				right: {
+					type: "ConditionalExpression",
+					test: requiredChild$2(node, "test"),
+					consequent: {
+						type: "Literal",
+						value: entry
 					},
-					right: {
-						type: "ConditionalExpression",
-						test: node.test,
-						consequent: {
-							type: "Literal",
-							value: entry
-						},
-						alternate: {
-							type: "Literal",
-							value: exit
-						}
+					alternate: {
+						type: "Literal",
+						value: exit
 					}
 				}
-			}, { type: "BreakStatement" }]
-		});
+			}
+		}, { type: "BreakStatement" }]));
 		this.emitter.emit("branch", testEntry);
 		this.breaks.push({
-			label: node.label && node.label.name,
+			label: labelName(node),
 			id: exit
 		});
 		this.continues.push({
-			label: node.label && node.label.name,
+			label: labelName(node),
 			id: entry
 		});
-		this.transformBlock(node.body, entry, testEntry);
+		this.transformBlock(requiredChild$2(node, "body"), entry, testEntry);
 		this.breaks.pop();
 		this.continues.pop();
 	}
@@ -2212,78 +2465,43 @@ var Flattener = class {
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
 		const comps = [];
+		const cases = switchCases(node);
 		this.breaks.push({
 			label: null,
 			id: exit
 		});
 		let nextCaseEntry = this.rng.get();
-		node.cases.forEach((switchCase) => {
-			const isLast = switchCase == _.last(node.cases);
+		cases.forEach((caseNode, index) => {
+			const isLast = index == cases.length - 1;
 			const caseEntry = nextCaseEntry;
 			nextCaseEntry = this.rng.get();
-			/**
-			* What happens if there are empty BlockStatements elsewhere? Does it hang?
-			*/
-			if (switchCase.consequent.length > 0) this.transformBlock({
+			const consequent = nodeArray$3(nodeFields$3(caseNode).consequent);
+			if (consequent.length > 0) this.transformBlock({
 				type: "BlockStatement",
-				body: switchCase.consequent
+				body: consequent
 			}, caseEntry, isLast ? exit : nextCaseEntry);
 			else nextCaseEntry = caseEntry;
-			if (switchCase.test) comps.push({
+			const test = childNode$3(caseNode, "test");
+			if (test) comps.push({
 				type: "IfStatement",
 				test: {
 					type: "BinaryExpression",
 					operator: "==",
-					left: utils_default.cloneISwearIKnowWhatImDoing(node.discriminant),
-					right: switchCase.test
+					left: utils_default.cloneISwearIKnowWhatImDoing(requiredChild$2(node, "discriminant")),
+					right: test
 				},
 				consequent: {
 					type: "BlockStatement",
-					body: [{
-						type: "ExpressionStatement",
-						expression: {
-							type: "AssignmentExpression",
-							operator: "=",
-							left: {
-								type: "Identifier",
-								name: "state"
-							},
-							right: {
-								type: "Literal",
-								value: caseEntry
-							}
-						}
-					}, { type: "BreakStatement" }]
+					body: [stateAssignment(caseEntry), { type: "BreakStatement" }]
 				}
 			});
 			else comps.push({
 				type: "BlockStatement",
-				body: [{
-					type: "ExpressionStatement",
-					expression: {
-						type: "AssignmentExpression",
-						operator: "=",
-						left: {
-							type: "Identifier",
-							name: "state"
-						},
-						right: {
-							type: "Literal",
-							value: caseEntry
-						}
-					}
-				}, { type: "BreakStatement" }]
+				body: [stateAssignment(caseEntry), { type: "BreakStatement" }]
 			});
 		});
 		this.breaks.pop();
-		this.output.push({
-			type: "SwitchCase",
-			test: {
-				type: "Literal",
-				value: entry
-			},
-			consequent: comps
-		});
+		this.output.push(switchCase(entry, comps));
 	}
 	/**
 	* Import TryStatement into control flow table
@@ -2295,58 +2513,51 @@ var Flattener = class {
 		assert.equal(node.type, "TryStatement");
 		assert.equal(typeof entry, "number");
 		assert.equal(typeof exit, "number");
-		assert.ok(node.handler);
-		assert.ok(!node.finalizer);
+		const handler = requiredChild$2(node, "handler");
+		assert.ok(!childNode$3(node, "finalizer"));
 		const catchEntry = this.rng.get();
-		if (node.handler) {
-			var scopeDef = node.handler.body.body.splice(0, 2);
-			assert(scopeDef[0].type == "VariableDeclaration" && scopeDef[0].declarations.length == 1 && scopeDef[0].declarations[0].id.name.indexOf("$$scope") == 0, "First element of node.handler.body isn't a VariableDeclaration of a scope object");
-			assert(scopeDef[1].type == "ExpressionStatement" && scopeDef[1].expression.type == "AssignmentExpression" && scopeDef[1].expression.left.type == "MemberExpression" && scopeDef[1].expression.left.object.name.indexOf("$$scope") == 0 && scopeDef[1].expression.right.name.indexOf("$$var") == 0, "Second element of node.handler.body is not a e assignment");
-		}
-		const createHandler = (entry) => {
-			if (node.handler) pushUniqSwitchCase(this.handlers, {
+		const scopeDef = mutableBody$3(requiredChild$2(handler, "body")).splice(0, 2);
+		const scopeDeclaration = scopeDef[0];
+		const exceptionAssignment = scopeDef[1];
+		const declarator = nodeDeclarations$2(scopeDeclaration)[0];
+		const scopeName = nodeName$5(childNode$3(declarator, "id")) || "";
+		const assignmentExpression = childNode$3(exceptionAssignment, "expression");
+		const assignmentLeft = assignmentExpression ? childNode$3(assignmentExpression, "left") : null;
+		const assignmentRight = assignmentExpression ? childNode$3(assignmentExpression, "right") : null;
+		const exceptionReference = nodeFields$3(handler)["toildefender$exception"];
+		assert(scopeDeclaration?.type == "VariableDeclaration" && nodeDeclarations$2(scopeDeclaration).length == 1 && scopeName.indexOf("$$scope") == 0, "First element of node.handler.body isn't a VariableDeclaration of a scope object");
+		assert(exceptionAssignment?.type == "ExpressionStatement" && assignmentExpression?.type == "AssignmentExpression" && assignmentLeft?.type == "MemberExpression" && (nodeName$5(childNode$3(assignmentLeft, "object")) || "").indexOf("$$scope") == 0 && (nodeName$5(assignmentRight) || "").indexOf("$$var") == 0, "Second element of node.handler.body is not a e assignment");
+		assert(estest_default.isNode(exceptionReference));
+		const createHandler = (branchEntry) => {
+			pushUniqSwitchCase(this.handlers, {
 				type: "SwitchCase",
 				test: {
 					type: "Literal",
-					value: entry
+					value: branchEntry
 				},
 				consequent: [
-					scopeDef[0],
+					scopeDeclaration,
 					{
 						type: "ExpressionStatement",
 						expression: {
 							type: "AssignmentExpression",
 							operator: "=",
-							left: node.handler.toildefender$exception,
+							left: exceptionReference,
 							right: {
 								type: "Identifier",
 								name: "e"
 							}
 						}
 					},
-					{
-						type: "ExpressionStatement",
-						expression: {
-							type: "AssignmentExpression",
-							operator: "=",
-							left: {
-								type: "Identifier",
-								name: "state"
-							},
-							right: {
-								type: "Literal",
-								value: catchEntry
-							}
-						}
-					},
+					stateAssignment(catchEntry),
 					{ type: "BreakStatement" }
 				]
 			});
 		};
 		this.emitter.on("branch", createHandler);
-		this.transformBlock(node.block, entry, exit);
+		this.transformBlock(requiredChild$2(node, "block"), entry, exit);
 		this.emitter.removeListener("branch", createHandler);
-		if (node.handler) this.transformBlock(node.handler.body, catchEntry, exit);
+		this.transformBlock(requiredChild$2(handler, "body"), catchEntry, exit);
 	}
 	/**
 	* Transform duplicate scope and arguments into single unified declarations
@@ -2356,26 +2567,27 @@ var Flattener = class {
 	unifyPrefixStatements(ast) {
 		const scopeObjects = /* @__PURE__ */ new Map();
 		let maximumScopeIndex = 0;
-		function scopeNameFromReference(node) {
-			if (node && node.type == "MemberExpression" && node.object && node.object.type == "Identifier" && _.startsWith(node.object.name, "$$scope") && node.property && node.property.type == "Literal" && typeof node.property.value == "number") return node.object.name;
-			return null;
-		}
 		function ensureScopeObject(name) {
-			if (!scopeObjects.has(name)) scopeObjects.set(name, {
-				max: -1,
-				offset: 0
-			});
-			return scopeObjects.get(name);
+			let info = scopeObjects.get(name);
+			if (!info) {
+				info = {
+					max: -1,
+					offset: 0
+				};
+				scopeObjects.set(name, info);
+			}
+			return info;
 		}
-		traverser_default.traverse(ast, [], (node, stack) => {
-			if (node.toildefender$scopeObject) {
-				const declaration = node.declarations && node.declarations[0];
-				if (declaration && declaration.id && declaration.id.type == "Identifier") ensureScopeObject(declaration.id.name);
-			} else if (node.toildefender$scopeObjectReference) {
-				const name = scopeNameFromReference(node);
+		traverser_default.traverse(ast, [], (node) => {
+			if (nodeFlag$2(node, "toildefender$scopeObject")) {
+				const declaration = nodeDeclarations$2(node)[0];
+				const name = nodeName$5(childNode$3(declaration, "id"));
+				if (name) ensureScopeObject(name);
+			} else if (nodeFlag$2(node, "toildefender$scopeObjectReference")) {
+				const name = memberScopeName(node);
 				if (name) {
-					const info = ensureScopeObject(name);
-					info.max = Math.max(info.max, node.property.value);
+					const value = nodeValue$3(requiredChild$2(node, "property"));
+					if (typeof value == "number") ensureScopeObject(name).max = Math.max(ensureScopeObject(name).max, value);
 				}
 			}
 			return node;
@@ -2387,24 +2599,32 @@ var Flattener = class {
 			nextScopeOffset += info.max + 1;
 		});
 		ast = traverser_default.traverse(ast, [], (node, stack) => {
-			if (node.toildefender$reassigningArguments && !node.toildefender$followsSlicingArguments) node = { type: "EmptyStatement" };
-			else if (node.toildefender$scopeObject) node = { type: "EmptyStatement" };
-			else if (node.toildefender$scopeObjectReference) {
-				const name = scopeNameFromReference(node);
+			if (nodeFlag$2(node, "toildefender$reassigningArguments") && !nodeFlag$2(node, "toildefender$followsSlicingArguments")) node = { type: "EmptyStatement" };
+			else if (nodeFlag$2(node, "toildefender$scopeObject")) node = { type: "EmptyStatement" };
+			else if (nodeFlag$2(node, "toildefender$scopeObjectReference")) {
+				const name = memberScopeName(node);
 				const info = name ? scopeObjects.get(name) : null;
-				if (info) {
-					node.property.value += info.offset;
-					maximumScopeIndex = Math.max(maximumScopeIndex, node.property.value);
+				const property = childNode$3(node, "property");
+				const value = nodeValue$3(property);
+				if (info && property && typeof value == "number") {
+					const shifted = value + info.offset;
+					setNodeValue(property, shifted);
+					maximumScopeIndex = Math.max(maximumScopeIndex, shifted);
 				}
-				if (node.object && node.object.type == "Identifier") node.object.name = "$$unifiedScope";
-			} else if (node.type == "Identifier" && _.startsWith(node.name, "$$scope")) {
-				const parent = stack[1] && stack[1].node;
-				if (parent && parent.toildefender$scopeObjectReference) return node;
-				node.name = "$$unifiedScope";
+				const object = childNode$3(node, "object");
+				if (object?.type == "Identifier") setNodeName$1(object, "$$unifiedScope");
+			} else if (node.type == "Identifier" && (nodeName$5(node) || "").startsWith("$$scope")) {
+				const parent = stack[1]?.node;
+				if (parent && nodeFlag$2(parent, "toildefender$scopeObjectReference")) return node;
+				setNodeName$1(node, "$$unifiedScope");
 			}
 			return node;
 		});
-		ast.body[0].body.body.splice(0, 0, {
+		const first = bodyArray$2(ast)[0];
+		if (!first) return ast;
+		const firstBody = childNode$3(first, "body");
+		if (!firstBody) return ast;
+		mutableBody$3(firstBody).splice(0, 0, {
 			type: "ExpressionStatement",
 			expression: {
 				type: "VariableDeclaration",
@@ -2448,6 +2668,82 @@ var Flattener = class {
 };
 //#endregion
 //#region src/processors/normalizer.ts
+function nodeFields$2(node) {
+	return node;
+}
+function nodeArray$2(value) {
+	return Array.isArray(value) ? value : [];
+}
+function rawArray(value) {
+	return Array.isArray(value) ? value : [];
+}
+function childNode$2(node, key) {
+	const value = nodeFields$2(node)[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function requiredChild$1(node, key) {
+	const child = childNode$2(node, key);
+	assert.ok(child, `Missing ${node.type}.${key}`);
+	return child;
+}
+function setNodeField$1(node, key, value) {
+	nodeFields$2(node)[key] = value;
+}
+function nodeName$4(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function nodeValue$2(node) {
+	return node?.value;
+}
+function nodeKind$2(node) {
+	const kind = node.kind;
+	return typeof kind == "string" ? kind : "var";
+}
+function nodeOperator$2(node) {
+	const operator = node.operator;
+	return typeof operator == "string" ? operator : null;
+}
+function nodeComputed$1(node) {
+	return node.computed === true;
+}
+function nodeFlag$1(node, key) {
+	return node[key] === true;
+}
+function bodyArray$1(node) {
+	return nodeArray$2(nodeFields$2(node).body);
+}
+function mutableBody$2(node) {
+	const body = nodeFields$2(node).body;
+	if (Array.isArray(body)) return body;
+	const nextBody = [];
+	nodeFields$2(node).body = nextBody;
+	return nextBody;
+}
+function nodeArguments$2(node) {
+	return nodeArray$2(nodeFields$2(node).arguments);
+}
+function nodeParams$2(node) {
+	return nodeArray$2(nodeFields$2(node).params);
+}
+function nodeDeclarations$1(node) {
+	return nodeArray$2(nodeFields$2(node).declarations);
+}
+function nodeProperties$1(node) {
+	return nodeArray$2(nodeFields$2(node).properties);
+}
+function nodeElements$1(node) {
+	return rawArray(nodeFields$2(node).elements).map((element) => estest_default.isNode(element) ? element : null);
+}
+function undefinedExpression() {
+	return {
+		type: "Identifier",
+		name: "undefined"
+	};
+}
+function fallbackExpression(node, fallback) {
+	return node || fallback;
+}
 /**
 * Chain an array of expressions with an operator.
 * @param {Expression[]} expressions
@@ -2468,7 +2764,7 @@ function chain(expressions, operator) {
 			type: "BinaryExpression",
 			operator,
 			left: result,
-			right: expressions[1]
+			right: expressions[i]
 		};
 		return result;
 	}
@@ -2480,12 +2776,13 @@ function chain(expressions, operator) {
 */
 function blockToArray(node) {
 	assert.ok(estest_default.isNode(node));
-	if (Array.isArray(node.body)) return node.body;
-	else if (node.body) return [node.body];
+	const body = nodeFields$2(node).body;
+	if (Array.isArray(body)) return body;
+	else if (estest_default.isNode(body)) return [body];
 	else return [node];
 }
 function hasSpreadElement(nodes) {
-	return nodes.some((node) => node && node.type == "SpreadElement");
+	return nodes.some((node) => node.type == "SpreadElement");
 }
 function isSimpleThisReceiver(node) {
 	return node.type == "Identifier" || node.type == "ThisExpression";
@@ -2525,7 +2822,7 @@ function spreadArgumentsToArray(args) {
 	args.forEach((arg) => {
 		if (arg.type == "SpreadElement") {
 			flushPending();
-			parts.push(arg.argument);
+			parts.push(requiredChild$1(arg, "argument"));
 		} else pending.push(arg);
 	});
 	flushPending();
@@ -2551,7 +2848,7 @@ function withFinalizerBefore(node, finalizer) {
 					type: "Identifier",
 					name: "toildefender$return"
 				},
-				init: node.argument
+				init: childNode$2(node, "argument")
 			}]
 		});
 		body.push(utils_default.cloneISwearIKnowWhatImDoing(finalizer));
@@ -2572,27 +2869,29 @@ function withFinalizerBefore(node, finalizer) {
 	};
 }
 function methodDefinitionName(method) {
-	if (!method || !method.key) return "";
-	if (method.key.type == "Identifier") return method.key.name;
-	if (method.key.type == "Literal") return String(method.key.value);
+	const key = method ? childNode$2(method, "key") : null;
+	if (!key) return "";
+	if (key.type == "Identifier" || key.type == "PrivateIdentifier") return nodeName$4(key) || "";
+	if (key.type == "Literal") return String(nodeValue$2(key));
 	return "";
 }
 function isConstructorMethod(method) {
-	return method.type == "MethodDefinition" && method.kind == "constructor" && methodDefinitionName(method) == "constructor";
+	return method.type == "MethodDefinition" && nodeKind$2(method) == "constructor" && methodDefinitionName(method) == "constructor";
 }
 function privateStoreName(className, privateName) {
 	return `$$private$${className}$${privateName}`;
 }
 function classFieldKey(field) {
-	if (field.key.type == "Identifier") return {
+	const key = requiredChild$1(field, "key");
+	if (key.type == "Identifier") return {
 		type: "Identifier",
-		name: field.key.name
+		name: nodeName$4(key) || ""
 	};
-	if (field.key.type == "PrivateIdentifier") return {
+	if (key.type == "PrivateIdentifier") return {
 		type: "Literal",
-		value: field.key.name
+		value: nodeName$4(key) || ""
 	};
-	return field.key;
+	return key;
 }
 function assignmentStatement(left, right) {
 	return {
@@ -2601,10 +2900,7 @@ function assignmentStatement(left, right) {
 			type: "AssignmentExpression",
 			operator: "=",
 			left,
-			right: right || {
-				type: "Identifier",
-				name: "undefined"
-			}
+			right: fallbackExpression(right, undefinedExpression())
 		}
 	};
 }
@@ -2625,10 +2921,7 @@ function weakMapSetStatement(storeName, object, value) {
 				},
 				computed: false
 			},
-			arguments: [object, value || {
-				type: "Identifier",
-				name: "undefined"
-			}]
+			arguments: [object, fallbackExpression(value, undefinedExpression())]
 		}
 	};
 }
@@ -2648,12 +2941,6 @@ function weakMapGetExpression(storeName, object) {
 			computed: false
 		},
 		arguments: [object]
-	};
-}
-function undefinedExpression() {
-	return {
-		type: "Identifier",
-		name: "undefined"
 	};
 }
 function nullishTest(expression) {
@@ -2679,45 +2966,51 @@ function notNullishTest(expression) {
 	};
 }
 function propertyKeyValue(property) {
-	if (property.key.type == "Identifier") return property.key.name;
-	if (property.key.type == "Literal") return property.key.value;
+	const key = requiredChild$1(property, "key");
+	if (key.type == "Identifier") return nodeName$4(key) || "";
+	if (key.type == "Literal") {
+		const value = nodeValue$2(key);
+		return typeof value == "string" || typeof value == "number" ? value : String(value);
+	}
 	return null;
 }
 function propertyMemberExpression(object, property) {
+	const key = requiredChild$1(property, "key");
 	return {
 		type: "MemberExpression",
 		object,
-		property: property.key.type == "Identifier" ? {
+		property: key.type == "Identifier" ? {
 			type: "Identifier",
-			name: property.key.name
-		} : utils_default.cloneISwearIKnowWhatImDoing(property.key),
-		computed: property.computed === true || property.key.type == "Literal"
+			name: nodeName$4(key) || ""
+		} : utils_default.cloneISwearIKnowWhatImDoing(key),
+		computed: nodeComputed$1(property) || key.type == "Literal"
 	};
 }
 function hasObjectPattern(pattern) {
-	return pattern.type == "ObjectPattern";
+	return pattern?.type == "ObjectPattern";
 }
 function hasArrayPattern(pattern) {
-	return pattern.type == "ArrayPattern";
+	return pattern?.type == "ArrayPattern";
 }
 function canLowerArrayPattern(pattern) {
-	return pattern.type == "ArrayPattern" && pattern.elements.every((element) => {
+	return pattern.type == "ArrayPattern" && nodeElements$1(pattern).every((element) => {
 		if (element == null) return true;
 		if (element.type == "Identifier") return true;
-		if (element.type == "RestElement") return element.argument.type == "Identifier";
-		return element.type == "AssignmentPattern" && element.left.type == "Identifier";
+		if (element.type == "RestElement") return requiredChild$1(element, "argument").type == "Identifier";
+		return element.type == "AssignmentPattern" && requiredChild$1(element, "left").type == "Identifier";
 	});
 }
 function canLowerObjectRest(pattern) {
-	return pattern.type == "ObjectPattern" && pattern.properties.every((prop) => {
-		if (prop.type == "RestElement") return prop.argument.type == "Identifier";
-		if (prop.type != "Property" || prop.computed === true || propertyKeyValue(prop) == null) return false;
-		if (prop.value.type == "Identifier") return true;
-		return prop.value.type == "AssignmentPattern" && prop.value.left.type == "Identifier";
+	return pattern.type == "ObjectPattern" && nodeProperties$1(pattern).every((prop) => {
+		if (prop.type == "RestElement") return requiredChild$1(prop, "argument").type == "Identifier";
+		const value = childNode$2(prop, "value");
+		if (prop.type != "Property" || nodeComputed$1(prop) || propertyKeyValue(prop) == null || !value) return false;
+		if (value.type == "Identifier") return true;
+		return value.type == "AssignmentPattern" && requiredChild$1(value, "left").type == "Identifier";
 	});
 }
 function hasObjectSpread(node) {
-	return node.properties.some((prop) => prop.type == "SpreadElement");
+	return nodeProperties$1(node).some((prop) => prop.type == "SpreadElement");
 }
 function objectAssignCall(parts) {
 	return {
@@ -2795,27 +3088,23 @@ function arrayPatternElementDeclaration(kind, sourceName, element, index) {
 		kind,
 		declarations: [{
 			type: "VariableDeclarator",
-			id: element.argument,
+			id: requiredChild$1(element, "argument"),
 			init: arrayRestExpression(sourceName, index)
 		}]
 	};
 	let id = element;
-	let init;
-	init = arrayElementExpression(sourceName, index);
+	let init = arrayElementExpression(sourceName, index);
 	if (element.type == "AssignmentPattern") {
-		id = element.left;
+		id = requiredChild$1(element, "left");
 		init = {
 			type: "ConditionalExpression",
 			test: {
 				type: "BinaryExpression",
 				operator: "===",
 				left: arrayElementExpression(sourceName, index),
-				right: {
-					type: "Identifier",
-					name: "undefined"
-				}
+				right: undefinedExpression()
 			},
-			consequent: element.right,
+			consequent: requiredChild$1(element, "right"),
 			alternate: arrayElementExpression(sourceName, index)
 		};
 	}
@@ -2831,8 +3120,7 @@ function arrayPatternElementDeclaration(kind, sourceName, element, index) {
 }
 function arrayPatternStatements(kind, pattern, init, rngAlpha) {
 	const sourceName = `$$destructure$arr$${rngAlpha.get()}`;
-	let statements;
-	statements = [{
+	const statements = [{
 		type: "VariableDeclaration",
 		kind: "var",
 		declarations: [{
@@ -2841,13 +3129,13 @@ function arrayPatternStatements(kind, pattern, init, rngAlpha) {
 				type: "Identifier",
 				name: sourceName
 			},
-			init: init || {
+			init: fallbackExpression(init, {
 				type: "ArrayExpression",
 				elements: []
-			}
+			})
 		}]
 	}];
-	pattern.elements.forEach((element, index) => {
+	nodeElements$1(pattern).forEach((element, index) => {
 		const lowered = arrayPatternElementDeclaration(kind, sourceName, element, index);
 		if (lowered) statements.push(lowered);
 	});
@@ -2858,22 +3146,19 @@ function arrayPatternAssignmentStatement(sourceName, element, index) {
 	let left;
 	let right;
 	if (element.type == "RestElement") {
-		left = element.argument;
+		left = requiredChild$1(element, "argument");
 		right = arrayRestExpression(sourceName, index);
 	} else if (element.type == "AssignmentPattern") {
-		left = element.left;
+		left = requiredChild$1(element, "left");
 		right = {
 			type: "ConditionalExpression",
 			test: {
 				type: "BinaryExpression",
 				operator: "===",
 				left: arrayElementExpression(sourceName, index),
-				right: {
-					type: "Identifier",
-					name: "undefined"
-				}
+				right: undefinedExpression()
 			},
-			consequent: element.right,
+			consequent: requiredChild$1(element, "right"),
 			alternate: arrayElementExpression(sourceName, index)
 		};
 	} else {
@@ -2884,8 +3169,7 @@ function arrayPatternAssignmentStatement(sourceName, element, index) {
 }
 function arrayPatternAssignmentStatements(pattern, init, rngAlpha) {
 	const sourceName = `$$destructure$arr$${rngAlpha.get()}`;
-	let statements;
-	statements = [{
+	const statements = [{
 		type: "VariableDeclaration",
 		kind: "var",
 		declarations: [{
@@ -2894,13 +3178,13 @@ function arrayPatternAssignmentStatements(pattern, init, rngAlpha) {
 				type: "Identifier",
 				name: sourceName
 			},
-			init: init || {
+			init: fallbackExpression(init, {
 				type: "ArrayExpression",
 				elements: []
-			}
+			})
 		}]
 	}];
-	pattern.elements.forEach((element, index) => {
+	nodeElements$1(pattern).forEach((element, index) => {
 		const lowered = arrayPatternAssignmentStatement(sourceName, element, index);
 		if (lowered) statements.push(lowered);
 	});
@@ -2911,11 +3195,11 @@ function objectPatternPropertyDeclaration(kind, sourceName, prop) {
 		type: "Identifier",
 		name: sourceName
 	}, prop);
-	let id = prop.value;
-	let init;
-	init = member;
-	if (prop.value.type == "AssignmentPattern") {
-		id = prop.value.left;
+	const value = requiredChild$1(prop, "value");
+	let id = value;
+	let init = member;
+	if (value.type == "AssignmentPattern") {
+		id = requiredChild$1(value, "left");
 		init = {
 			type: "ConditionalExpression",
 			test: {
@@ -2924,7 +3208,7 @@ function objectPatternPropertyDeclaration(kind, sourceName, prop) {
 				left: utils_default.cloneISwearIKnowWhatImDoing(member),
 				right: undefinedExpression()
 			},
-			consequent: prop.value.right,
+			consequent: requiredChild$1(value, "right"),
 			alternate: member
 		};
 	}
@@ -2950,16 +3234,14 @@ function containsThisExpression(node) {
 	return found;
 }
 function defaultParameterStatement(param) {
+	const left = requiredChild$1(param, "left");
 	return {
 		type: "IfStatement",
 		test: {
 			type: "BinaryExpression",
 			operator: "===",
-			left: utils_default.cloneISwearIKnowWhatImDoing(param.left),
-			right: {
-				type: "Identifier",
-				name: "undefined"
-			}
+			left: utils_default.cloneISwearIKnowWhatImDoing(left),
+			right: undefinedExpression()
 		},
 		consequent: {
 			type: "BlockStatement",
@@ -2968,8 +3250,8 @@ function defaultParameterStatement(param) {
 				expression: {
 					type: "AssignmentExpression",
 					operator: "=",
-					left: utils_default.cloneISwearIKnowWhatImDoing(param.left),
-					right: param.right
+					left: utils_default.cloneISwearIKnowWhatImDoing(left),
+					right: requiredChild$1(param, "right")
 				}
 			}]
 		}
@@ -2981,7 +3263,7 @@ function restParameterStatement(param, index) {
 		kind: "var",
 		declarations: [{
 			type: "VariableDeclarator",
-			id: param.argument,
+			id: requiredChild$1(param, "argument"),
 			init: {
 				type: "CallExpression",
 				callee: {
@@ -3024,31 +3306,33 @@ function restParameterStatement(param, index) {
 	};
 }
 function lowerFunctionParameters(node) {
-	if (!estest_default.isFunction(node) || !Array.isArray(node.params)) return node;
+	if (!estest_default.isFunction(node)) return node;
 	const prefix = [];
 	const params = [];
-	node.params.forEach((param, index) => {
-		if (param.type == "AssignmentPattern" && param.left.type == "Identifier") {
+	nodeParams$2(node).forEach((param, index) => {
+		if (param.type == "AssignmentPattern" && requiredChild$1(param, "left").type == "Identifier") {
 			prefix.push(defaultParameterStatement(param));
-			params.push(param.left);
+			params.push(requiredChild$1(param, "left"));
 			return;
 		}
-		if (param.type == "RestElement" && param.argument.type == "Identifier") {
+		if (param.type == "RestElement" && requiredChild$1(param, "argument").type == "Identifier") {
 			prefix.push(restParameterStatement(param, index));
 			return;
 		}
 		params.push(param);
 	});
-	node.params = params;
+	setNodeField$1(node, "params", params);
 	if (prefix.length == 0) return node;
-	if (node.body.type != "BlockStatement") node.body = {
+	const body = requiredChild$1(node, "body");
+	if (body.type != "BlockStatement") setNodeField$1(node, "body", {
 		type: "BlockStatement",
 		body: [{
 			type: "ReturnStatement",
-			argument: node.body
+			argument: body
 		}]
-	};
-	node.body.body = prefix.concat(node.body.body);
+	});
+	const nextBody = requiredChild$1(node, "body");
+	setNodeField$1(nextBody, "body", prefix.concat(bodyArray$1(nextBody)));
 	return node;
 }
 function blockNeedsLexicalScope(node) {
@@ -3056,7 +3340,7 @@ function blockNeedsLexicalScope(node) {
 	let needsScope = false;
 	traverser_default.traverseEx(node, [], function(child) {
 		if (child != node && estest_default.isFunction(child)) return child;
-		if (child.type == "VariableDeclaration" && child.kind != "var" || child.type == "ClassDeclaration") {
+		if (child.type == "VariableDeclaration" && nodeKind$2(child) != "var" || child.type == "ClassDeclaration") {
 			needsScope = true;
 			this.abort();
 		}
@@ -3107,17 +3391,20 @@ var Normalizer = class {
 	*/
 	simplifyBlockStatement(node) {
 		assert.ok(estest_default.isNode(node));
-		function getBlockBodys(node, isRoot) {
-			if (node.type == "Program" || node.type == "BlockStatement") {
-				if (!isRoot && blockNeedsLexicalScope(node)) return [node];
+		function getBlockBodies(child, isRoot) {
+			if (child.type == "Program" || child.type == "BlockStatement") {
+				if (!isRoot && blockNeedsLexicalScope(child)) return [child];
 				const stmts = [];
-				node.body.forEach((stmt) => utils_default.push(stmts, getBlockBodys(stmt, false)));
+				bodyArray$1(child).forEach((stmt) => {
+					stmts.push(...getBlockBodies(stmt, false));
+				});
 				return stmts;
-			} else return [node];
+			}
+			return [child];
 		}
 		return {
 			type: node.type,
-			body: getBlockBodys(node, true)
+			body: getBlockBodies(node, true)
 		};
 	}
 	/**
@@ -3129,14 +3416,11 @@ var Normalizer = class {
 		assert.ok(estest_default.isNode(node));
 		return {
 			type: "WhileStatement",
-			test: {
-				type: "Literal",
-				value: true
-			},
+			test: childNode$2(node, "test"),
 			body: {
 				type: "IfStatement",
-				test: node.test,
-				consequent: node.body,
+				test: childNode$2(node, "test"),
+				consequent: requiredChild$1(node, "body"),
 				alternate: { type: "BreakStatement" }
 			}
 		};
@@ -3156,9 +3440,9 @@ var Normalizer = class {
 			},
 			body: {
 				type: "BlockStatement",
-				body: [node.body, {
+				body: [requiredChild$1(node, "body"), {
 					type: "IfStatement",
-					test: node.test,
+					test: requiredChild$1(node, "test"),
 					consequent: { type: "EmptyStatement" },
 					alternate: { type: "BreakStatement" }
 				}]
@@ -3173,20 +3457,22 @@ var Normalizer = class {
 	simplifyForStatement(node) {
 		assert.ok(estest_default.isNode(node));
 		const body = [];
-		if (node.init) if (estest_default.isStatement(node.init)) body.push(node.init);
-		else if (estest_default.isExpression(node.init)) body.push({
+		const init = childNode$2(node, "init");
+		if (init) if (estest_default.isStatement(init)) body.push(init);
+		else if (estest_default.isExpression(init)) body.push({
 			type: "ExpressionStatement",
-			expression: node.init
+			expression: init
 		});
-		else throw new Error("Invalid node.init type " + node.init.type);
+		else throw new Error("Invalid node.init type " + init.type);
+		const update = childNode$2(node, "update");
 		body.push({
 			type: "WhileStatement",
-			test: node.test,
+			test: childNode$2(node, "test"),
 			body: {
 				type: "BlockStatement",
-				body: blockToArray(node.body).concat(node.update ? [{
+				body: blockToArray(requiredChild$1(node, "body")).concat(update ? [{
 					type: "ExpressionStatement",
-					expression: node.update
+					expression: update
 				}] : [])
 			}
 		});
@@ -3202,7 +3488,9 @@ var Normalizer = class {
 	*/
 	simplifyForInStatement(node) {
 		assert.ok(estest_default.isNode(node));
-		const propsName = `$$forin$props$${this.rngAlpha.get()}`, iterName = `$$forin$iter$${this.rngAlpha.get()}`;
+		const propsName = `$$forin$props$${this.rngAlpha.get()}`;
+		const iterName = `$$forin$iter$${this.rngAlpha.get()}`;
+		const left = requiredChild$1(node, "left");
 		const valueAtIndex = {
 			type: "MemberExpression",
 			object: {
@@ -3216,28 +3504,21 @@ var Normalizer = class {
 			computed: true
 		};
 		let assignStatements;
-		if (node.left.type == "VariableDeclaration") {
-			const declaration = node.left.declarations[0];
-			if (hasArrayPattern(declaration.id) && canLowerArrayPattern(declaration.id)) assignStatements = arrayPatternStatements(node.left.kind == "const" ? "let" : node.left.kind, declaration.id, valueAtIndex, this.rngAlpha);
+		if (left.type == "VariableDeclaration") {
+			const declaration = nodeDeclarations$1(left)[0];
+			const id = requiredChild$1(declaration, "id");
+			if (hasArrayPattern(id) && canLowerArrayPattern(id)) assignStatements = arrayPatternStatements(nodeKind$2(left) == "const" ? "let" : nodeKind$2(left), id, valueAtIndex, this.rngAlpha);
 			else assignStatements = [{
 				type: "VariableDeclaration",
 				kind: "var",
 				declarations: [{
 					type: "VariableDeclarator",
-					id: declaration.id,
+					id,
 					init: valueAtIndex
 				}]
 			}];
-		} else if (hasArrayPattern(node.left) && canLowerArrayPattern(node.left)) assignStatements = arrayPatternAssignmentStatements(node.left, valueAtIndex, this.rngAlpha);
-		else assignStatements = [{
-			type: "ExpressionStatement",
-			expression: {
-				type: "AssignmentExpression",
-				operator: "=",
-				left: node.left,
-				right: valueAtIndex
-			}
-		}];
+		} else if (hasArrayPattern(left) && canLowerArrayPattern(left)) assignStatements = arrayPatternAssignmentStatements(left, valueAtIndex, this.rngAlpha);
+		else assignStatements = [assignmentStatement(left, valueAtIndex)];
 		return {
 			type: "ForStatement",
 			init: {
@@ -3263,7 +3544,7 @@ var Normalizer = class {
 							},
 							computed: false
 						},
-						arguments: [node.right]
+						arguments: [requiredChild$1(node, "right")]
 					}
 				}, {
 					type: "VariableDeclarator",
@@ -3308,7 +3589,7 @@ var Normalizer = class {
 			},
 			body: {
 				type: "BlockStatement",
-				body: assignStatements.concat([node.body])
+				body: assignStatements.concat([requiredChild$1(node, "body")])
 			}
 		};
 	}
@@ -3319,7 +3600,9 @@ var Normalizer = class {
 	*/
 	simplifyForOfStatement(node) {
 		assert.ok(estest_default.isNode(node));
-		const valuesName = `$$forof$values$${this.rngAlpha.get()}`, iterName = `$$forof$iter$${this.rngAlpha.get()}`;
+		const valuesName = `$$forof$values$${this.rngAlpha.get()}`;
+		const iterName = `$$forof$iter$${this.rngAlpha.get()}`;
+		const left = requiredChild$1(node, "left");
 		const valueAtIndex = {
 			type: "MemberExpression",
 			object: {
@@ -3333,28 +3616,21 @@ var Normalizer = class {
 			computed: true
 		};
 		let assignStatements;
-		if (node.left.type == "VariableDeclaration") {
-			const declaration = node.left.declarations[0];
-			if (hasArrayPattern(declaration.id) && canLowerArrayPattern(declaration.id)) assignStatements = arrayPatternStatements(node.left.kind == "const" ? "let" : node.left.kind, declaration.id, valueAtIndex, this.rngAlpha);
+		if (left.type == "VariableDeclaration") {
+			const declaration = nodeDeclarations$1(left)[0];
+			const id = requiredChild$1(declaration, "id");
+			if (hasArrayPattern(id) && canLowerArrayPattern(id)) assignStatements = arrayPatternStatements(nodeKind$2(left) == "const" ? "let" : nodeKind$2(left), id, valueAtIndex, this.rngAlpha);
 			else assignStatements = [{
 				type: "VariableDeclaration",
-				kind: node.left.kind == "const" ? "let" : node.left.kind,
+				kind: nodeKind$2(left) == "const" ? "let" : nodeKind$2(left),
 				declarations: [{
 					type: "VariableDeclarator",
-					id: declaration.id,
+					id,
 					init: valueAtIndex
 				}]
 			}];
-		} else if (hasArrayPattern(node.left) && canLowerArrayPattern(node.left)) assignStatements = arrayPatternAssignmentStatements(node.left, valueAtIndex, this.rngAlpha);
-		else assignStatements = [{
-			type: "ExpressionStatement",
-			expression: {
-				type: "AssignmentExpression",
-				operator: "=",
-				left: node.left,
-				right: valueAtIndex
-			}
-		}];
+		} else if (hasArrayPattern(left) && canLowerArrayPattern(left)) assignStatements = arrayPatternAssignmentStatements(left, valueAtIndex, this.rngAlpha);
+		else assignStatements = [assignmentStatement(left, valueAtIndex)];
 		return {
 			type: "BlockStatement",
 			body: [{
@@ -3366,7 +3642,7 @@ var Normalizer = class {
 						type: "Identifier",
 						name: valuesName
 					},
-					init: node.right
+					init: requiredChild$1(node, "right")
 				}, {
 					type: "VariableDeclarator",
 					id: {
@@ -3412,7 +3688,7 @@ var Normalizer = class {
 				},
 				body: {
 					type: "BlockStatement",
-					body: assignStatements.concat(blockToArray(node.body))
+					body: assignStatements.concat(blockToArray(requiredChild$1(node, "body")))
 				}
 			}]
 		};
@@ -3424,76 +3700,56 @@ var Normalizer = class {
 	*/
 	simplifySwitchStatement(node) {
 		assert.ok(estest_default.isNode(node));
-		const cases = node.cases.map((c) => {
-			const breakIndex = _.findIndex(c.consequent, (x) => x.type == "BreakStatement");
-			let statements, breaks;
-			if (breakIndex != -1) {
-				statements = c.consequent.slice(0, breakIndex);
-				breaks = true;
-			} else {
-				statements = c.consequent;
-				breaks = false;
-			}
+		const cases = nodeArray$2(nodeFields$2(node).cases).map((caseNode) => {
+			const consequent = nodeArray$2(nodeFields$2(caseNode).consequent);
+			const breakIndex = consequent.findIndex((child) => child.type == "BreakStatement");
 			return {
-				test: c.test,
-				statements,
-				breaks
+				test: childNode$2(caseNode, "test"),
+				statements: breakIndex != -1 ? consequent.slice(0, breakIndex) : consequent,
+				breaks: breakIndex != -1
 			};
 		});
-		let stack = [], ifStmts = [];
+		let stack = [];
+		const ifStmts = [];
 		for (let i = 0; i < cases.length; ++i) {
 			stack.push(cases[i]);
 			if (cases[i].breaks) {
-				const testName = `$$switchtest$${this.rngAlpha.get()}`;
-				var ifStmt;
+				let ifStmt = null;
 				for (let j = 0; j < stack.length; ++j) {
 					const sliced = stack.slice(0, j + 1);
-					if (sliced.every((x) => x.test)) {
-						ifStmt = {
+					if (sliced.every((entry) => entry.test)) ifStmt = {
+						type: "IfStatement",
+						test: chain(sliced.map((entry) => {
+							return {
+								type: "BinaryExpression",
+								operator: "==",
+								left: entry.test || {
+									type: "Literal",
+									value: null
+								},
+								right: requiredChild$1(node, "discriminant")
+							};
+						}), "||"),
+						consequent: {
 							type: "BlockStatement",
-							body: [{
-								type: "VariableDeclaration",
-								kind: "var",
-								declarations: [{
-									type: "VariableDeclarator",
-									id: {
-										type: "Identifier",
-										name: testName
-									}
-								}]
-							}]
-						};
-						ifStmt = {
-							type: "IfStatement",
-							test: chain(sliced.map((x) => {
-								return {
-									type: "BinaryExpression",
-									operator: "==",
-									left: x.test,
-									right: node.discriminant
-								};
-							}), "||"),
-							consequent: {
-								type: "BlockStatement",
-								body: (ifStmt ? [ifStmt] : []).concat(stack[j].statements)
-							}
-						};
-					} else ifStmt = {
+							body: [...ifStmt ? [ifStmt] : [], ...stack[j].statements]
+						}
+					};
+					else ifStmt = {
 						type: "BlockStatement",
-						body: (ifStmt ? [ifStmt] : []).concat(stack[j].statements)
+						body: [...ifStmt ? [ifStmt] : [], ...stack[j].statements]
 					};
 				}
-				ifStmts.push(ifStmt);
-				ifStmt = null;
+				if (ifStmt) ifStmts.push(ifStmt);
 				stack = [];
 			}
 		}
 		this.logger.log(ifStmts);
-		let combinedIfStmt = ifStmts[ifStmts.length - 1];
+		let combinedIfStmt = ifStmts[ifStmts.length - 1] || { type: "EmptyStatement" };
 		for (let i = ifStmts.length - 2; i >= 0; --i) combinedIfStmt = {
 			type: "IfStatement",
-			test: ifStmts[i].test,
-			consequent: ifStmts[i].consequent,
+			test: requiredChild$1(ifStmts[i], "test"),
+			consequent: requiredChild$1(ifStmts[i], "consequent"),
 			alternate: combinedIfStmt
 		};
 		return combinedIfStmt;
@@ -3505,33 +3761,35 @@ var Normalizer = class {
 	*/
 	simplifyTryStatement(node) {
 		assert.ok(estest_default.isNode(node));
-		if (node.finalizer) if (node.handler) return this.simplifyTryStatement({
-			type: "TryStatement",
-			block: {
-				type: "BlockStatement",
-				body: [{
-					type: "TryStatement",
-					block: node.block,
-					handler: node.handler
-				}]
-			},
-			finalizer: node.finalizer
-		});
-		else {
-			const finalizer = node.finalizer;
-			traverser_default.traverseEx(node.block, [], function(node, stack) {
+		const finalizer = childNode$2(node, "finalizer");
+		const handler = childNode$2(node, "handler");
+		if (finalizer) {
+			if (handler) return this.simplifyTryStatement({
+				type: "TryStatement",
+				block: {
+					type: "BlockStatement",
+					body: [{
+						type: "TryStatement",
+						block: requiredChild$1(node, "block"),
+						handler
+					}]
+				},
+				finalizer
+			});
+			const block = requiredChild$1(node, "block");
+			traverser_default.traverseEx(block, [], function(child, stack) {
 				if (stack.some((x) => estest_default.isFunction(x.node))) {
 					this.abort();
-					return node;
-				} else if (exitsCurrentTry(node, stack)) return withFinalizerBefore(node, finalizer);
-				else return node;
+					return child;
+				} else if (exitsCurrentTry(child, stack)) return withFinalizerBefore(child, finalizer);
+				return child;
 			});
 			return {
 				type: "BlockStatement",
 				body: [
 					{
 						type: "TryStatement",
-						block: node.block,
+						block,
 						handler: {
 							type: "CatchClause",
 							param: {
@@ -3558,7 +3816,7 @@ var Normalizer = class {
 							}
 						}
 					},
-					node.finalizer,
+					finalizer,
 					{
 						type: "IfStatement",
 						test: {
@@ -3576,7 +3834,7 @@ var Normalizer = class {
 				]
 			};
 		}
-		else return node;
+		return node;
 	}
 	/**
 	* Lower simple spread calls like target.push(...items) to
@@ -3587,34 +3845,39 @@ var Normalizer = class {
 	*/
 	simplifyCallExpression(node) {
 		assert.ok(estest_default.isNode(node));
-		if (!hasSpreadElement(node.arguments)) return node;
+		const args = nodeArguments$2(node);
+		if (!hasSpreadElement(args)) return node;
+		const callee = requiredChild$1(node, "callee");
 		let thisArg = {
 			type: "Literal",
 			value: null
 		};
-		if (node.callee.type == "MemberExpression") {
-			if (!isSimpleThisReceiver(node.callee.object)) return node;
-			thisArg = utils_default.cloneISwearIKnowWhatImDoing(node.callee.object);
+		if (callee.type == "MemberExpression") {
+			const object = requiredChild$1(callee, "object");
+			if (!isSimpleThisReceiver(object)) return node;
+			thisArg = utils_default.cloneISwearIKnowWhatImDoing(object);
 		}
 		return {
 			type: "CallExpression",
 			callee: {
 				type: "MemberExpression",
-				object: node.callee,
+				object: callee,
 				property: {
 					type: "Identifier",
 					name: "apply"
 				},
 				computed: false
 			},
-			arguments: [thisArg, spreadArgumentsToArray(node.arguments)]
+			arguments: [thisArg, spreadArgumentsToArray(args)]
 		};
 	}
 	simplifyExpressionStatement(node) {
 		assert.ok(estest_default.isNode(node));
-		if (node.expression.type == "AssignmentExpression" && node.expression.operator == "=" && hasArrayPattern(node.expression.left) && canLowerArrayPattern(node.expression.left)) return {
+		const expression = requiredChild$1(node, "expression");
+		const left = childNode$2(expression, "left");
+		if (expression.type == "AssignmentExpression" && nodeOperator$2(expression) == "=" && hasArrayPattern(left) && left && canLowerArrayPattern(left)) return {
 			type: "BlockStatement",
-			body: arrayPatternAssignmentStatements(node.expression.left, node.expression.right, this.rngAlpha)
+			body: arrayPatternAssignmentStatements(left, childNode$2(expression, "right"), this.rngAlpha)
 		};
 		return node;
 	}
@@ -3627,18 +3890,18 @@ var Normalizer = class {
 	*/
 	simplifyChainExpression(node) {
 		assert.ok(estest_default.isNode(node));
-		return this.lowerOptionalChain(node.expression);
+		return this.lowerOptionalChain(requiredChild$1(node, "expression"));
 	}
 	lowerOptionalChain(node) {
 		if (node.type == "MemberExpression") {
-			const object = this.lowerOptionalChain(node.object);
+			const object = this.lowerOptionalChain(requiredChild$1(node, "object"));
 			const member = {
 				type: "MemberExpression",
 				object: utils_default.cloneISwearIKnowWhatImDoing(object),
-				property: node.property,
-				computed: node.computed === true
+				property: requiredChild$1(node, "property"),
+				computed: nodeComputed$1(node)
 			};
-			if (node.optional === true) return {
+			if (nodeFlag$1(node, "optional")) return {
 				type: "ConditionalExpression",
 				test: nullishTest(utils_default.cloneISwearIKnowWhatImDoing(object)),
 				consequent: undefinedExpression(),
@@ -3647,15 +3910,16 @@ var Normalizer = class {
 			return member;
 		}
 		if (node.type == "CallExpression") {
-			if (node.callee.type == "MemberExpression") return this.lowerOptionalMemberCall(node);
-			const callee = this.lowerOptionalChain(node.callee);
+			const calleeNode = requiredChild$1(node, "callee");
+			if (calleeNode.type == "MemberExpression") return this.lowerOptionalMemberCall(node);
+			const callee = this.lowerOptionalChain(calleeNode);
 			const call = {
 				type: "CallExpression",
 				callee: utils_default.cloneISwearIKnowWhatImDoing(callee),
-				arguments: node.arguments,
+				arguments: nodeArguments$2(node),
 				optional: false
 			};
-			if (node.optional === true) return {
+			if (nodeFlag$1(node, "optional")) return {
 				type: "ConditionalExpression",
 				test: nullishTest(utils_default.cloneISwearIKnowWhatImDoing(callee)),
 				consequent: undefinedExpression(),
@@ -3666,16 +3930,16 @@ var Normalizer = class {
 		return node;
 	}
 	lowerOptionalMemberCall(node) {
-		const member = node.callee;
-		const object = this.lowerOptionalChain(member.object);
+		const member = requiredChild$1(node, "callee");
+		const object = this.lowerOptionalChain(requiredChild$1(member, "object"));
 		const directMember = {
 			type: "MemberExpression",
 			object: utils_default.cloneISwearIKnowWhatImDoing(object),
-			property: member.property,
-			computed: member.computed === true
+			property: requiredChild$1(member, "property"),
+			computed: nodeComputed$1(member)
 		};
 		let alternate;
-		if (node.optional === true) {
+		if (nodeFlag$1(node, "optional")) {
 			alternate = {
 				type: "CallExpression",
 				callee: {
@@ -3687,7 +3951,7 @@ var Normalizer = class {
 					},
 					computed: false
 				},
-				arguments: [utils_default.cloneISwearIKnowWhatImDoing(object)].concat(node.arguments),
+				arguments: [utils_default.cloneISwearIKnowWhatImDoing(object)].concat(nodeArguments$2(node)),
 				optional: false
 			};
 			alternate = {
@@ -3699,10 +3963,10 @@ var Normalizer = class {
 		} else alternate = {
 			type: "CallExpression",
 			callee: directMember,
-			arguments: node.arguments,
+			arguments: nodeArguments$2(node),
 			optional: false
 		};
-		if (member.optional === true) return {
+		if (nodeFlag$1(member, "optional")) return {
 			type: "ConditionalExpression",
 			test: nullishTest(utils_default.cloneISwearIKnowWhatImDoing(object)),
 			consequent: undefinedExpression(),
@@ -3717,12 +3981,12 @@ var Normalizer = class {
 	*/
 	simplifyLogicalExpression(node) {
 		assert.ok(estest_default.isNode(node));
-		if (node.operator != "??") return node;
+		if (nodeOperator$2(node) != "??") return node;
 		return {
 			type: "ConditionalExpression",
-			test: notNullishTest(utils_default.cloneISwearIKnowWhatImDoing(node.left)),
-			consequent: node.left,
-			alternate: node.right
+			test: notNullishTest(utils_default.cloneISwearIKnowWhatImDoing(requiredChild$1(node, "left"))),
+			consequent: requiredChild$1(node, "left"),
+			alternate: requiredChild$1(node, "right")
 		};
 	}
 	/**
@@ -3747,10 +4011,10 @@ var Normalizer = class {
 				pending = [];
 			}
 		}
-		node.properties.forEach((prop) => {
+		nodeProperties$1(node).forEach((prop) => {
 			if (prop.type == "SpreadElement") {
 				flushPending();
-				parts.push(prop.argument);
+				parts.push(requiredChild$1(prop, "argument"));
 			} else pending.push(prop);
 		});
 		flushPending();
@@ -3767,9 +4031,16 @@ var Normalizer = class {
 	*/
 	simplifyVariableDeclaration(node, stack) {
 		assert.ok(estest_default.isNode(node));
-		if (!node.declarations.some((decl) => hasObjectPattern(decl.id) || hasArrayPattern(decl.id))) return node;
-		if (node.declarations.some((decl) => hasObjectPattern(decl.id) && !canLowerObjectRest(decl.id))) return node;
-		if (node.declarations.some((decl) => hasArrayPattern(decl.id) && !canLowerArrayPattern(decl.id))) return node;
+		const declarations = nodeDeclarations$1(node);
+		if (!declarations.some((decl) => hasObjectPattern(childNode$2(decl, "id")) || hasArrayPattern(childNode$2(decl, "id")))) return node;
+		if (declarations.some((decl) => {
+			const id = childNode$2(decl, "id");
+			return hasObjectPattern(id) && id !== null && !canLowerObjectRest(id);
+		})) return node;
+		if (declarations.some((decl) => {
+			const id = childNode$2(decl, "id");
+			return hasArrayPattern(id) && id !== null && !canLowerArrayPattern(id);
+		})) return node;
 		const parentFrame = stack[1];
 		if (parentFrame && parentFrame.node.type == "ForStatement" && parentFrame.key == "init") return node;
 		if (parentFrame && (parentFrame.node.type == "ForOfStatement" || parentFrame.node.type == "ForInStatement") && parentFrame.key == "left") return node;
@@ -3786,14 +4057,15 @@ var Normalizer = class {
 				normalDeclarations = [];
 			}
 		}
-		node.declarations.forEach((decl) => {
-			if (!hasObjectPattern(decl.id) && !hasArrayPattern(decl.id)) {
+		declarations.forEach((decl) => {
+			const id = requiredChild$1(decl, "id");
+			if (!hasObjectPattern(id) && !hasArrayPattern(id)) {
 				normalDeclarations.push(decl);
 				return;
 			}
 			flushNormalDeclarations();
-			if (hasArrayPattern(decl.id)) {
-				statements = statements.concat(arrayPatternStatements("var", decl.id, decl.init, this.rngAlpha));
+			if (hasArrayPattern(id)) {
+				statements = statements.concat(arrayPatternStatements("var", id, childNode$2(decl, "init"), this.rngAlpha));
 				return;
 			}
 			const sourceName = `$$destructure$obj$${this.rngAlpha.get()}`;
@@ -3806,21 +4078,21 @@ var Normalizer = class {
 						type: "Identifier",
 						name: sourceName
 					},
-					init: decl.init || {
+					init: fallbackExpression(childNode$2(decl, "init"), {
 						type: "ObjectExpression",
 						properties: []
-					}
+					})
 				}]
 			});
 			const excluded = [];
-			decl.id.properties.forEach((prop) => {
+			nodeProperties$1(id).forEach((prop) => {
 				if (prop.type == "RestElement") {
 					statements.push({
 						type: "VariableDeclaration",
 						kind: declarationKind,
 						declarations: [{
 							type: "VariableDeclarator",
-							id: prop.argument,
+							id: requiredChild$1(prop, "argument"),
 							init: objectWithoutKeysCall({
 								type: "Identifier",
 								name: sourceName
@@ -3848,23 +4120,25 @@ var Normalizer = class {
 	*/
 	simplifyArrowFunctionExpression(node) {
 		assert.ok(estest_default.isNode(node));
+		const body = requiredChild$1(node, "body");
 		let fn = {
 			type: "FunctionExpression",
 			id: null,
-			params: node.params,
-			body: node.body.type == "BlockStatement" ? node.body : {
+			params: nodeParams$2(node),
+			body: body.type == "BlockStatement" ? body : {
 				type: "BlockStatement",
 				body: [{
 					type: "ReturnStatement",
-					argument: node.body
+					argument: body
 				}]
 			},
 			generator: false,
 			expression: false,
-			async: node.async === true
+			async: nodeFlag$1(node, "async")
 		};
+		if (nodeFlag$1(node, "toildefender$noNumericVm")) setNodeField$1(fn, "toildefender$noNumericVm", true);
 		fn = lowerFunctionParameters(fn);
-		if (!containsThisExpression(fn.body)) return fn;
+		if (!containsThisExpression(requiredChild$1(fn, "body"))) return fn;
 		return {
 			type: "CallExpression",
 			callee: {
@@ -3887,37 +4161,40 @@ var Normalizer = class {
 	*/
 	simplifyClassDeclaration(node) {
 		assert.ok(estest_default.isNode(node));
-		const className = node.id && node.id.name || `$$class$${this.rngAlpha.get()}`;
+		const className = nodeName$4(childNode$2(node, "id")) || `$$class$${this.rngAlpha.get()}`;
 		const privateStores = {};
 		const instanceInitializers = [];
 		const staticAssignments = [];
 		const methods = [];
-		node.body.body.forEach((element) => {
+		const classBody = requiredChild$1(node, "body");
+		bodyArray$1(classBody).forEach((element) => {
 			if (element.type != "PropertyDefinition" && element.type != "FieldDefinition") {
 				methods.push(element);
 				return;
 			}
-			if (element.key.type == "PrivateIdentifier") {
-				const storeName = privateStoreName(className, element.key.name);
-				privateStores[element.key.name] = storeName;
-				if (element.static) staticAssignments.push(weakMapSetStatement(storeName, {
+			const key = requiredChild$1(element, "key");
+			if (key.type == "PrivateIdentifier") {
+				const keyName = nodeName$4(key) || "";
+				const storeName = privateStoreName(className, keyName);
+				privateStores[keyName] = storeName;
+				if (nodeFlag$1(element, "static")) staticAssignments.push(weakMapSetStatement(storeName, {
 					type: "Identifier",
 					name: className
-				}, element.value));
-				else instanceInitializers.push(weakMapSetStatement(storeName, { type: "ThisExpression" }, element.value));
+				}, childNode$2(element, "value")));
+				else instanceInitializers.push(weakMapSetStatement(storeName, { type: "ThisExpression" }, childNode$2(element, "value")));
 				return;
 			}
 			const target = {
 				type: "MemberExpression",
-				object: element.static ? {
+				object: nodeFlag$1(element, "static") ? {
 					type: "Identifier",
 					name: className
 				} : { type: "ThisExpression" },
 				property: classFieldKey(element),
-				computed: element.computed === true || element.key.type == "Literal"
+				computed: nodeComputed$1(element) || key.type == "Literal"
 			};
-			if (element.static) staticAssignments.push(assignmentStatement(target, element.value));
-			else instanceInitializers.push(assignmentStatement(target, element.value));
+			if (nodeFlag$1(element, "static")) staticAssignments.push(assignmentStatement(target, childNode$2(element, "value")));
+			else instanceInitializers.push(assignmentStatement(target, childNode$2(element, "value")));
 		});
 		methods.forEach((method) => {
 			this.lowerPrivateMembers(method, privateStores);
@@ -3938,7 +4215,7 @@ var Normalizer = class {
 						params: [],
 						body: {
 							type: "BlockStatement",
-							body: node.superClass ? [{
+							body: childNode$2(node, "superClass") ? [{
 								type: "ExpressionStatement",
 								expression: {
 									type: "CallExpression",
@@ -3956,15 +4233,19 @@ var Normalizer = class {
 				};
 				methods.unshift(constructor);
 			}
-			const body = constructor.value.body.body;
+			const body = mutableBody$2(requiredChild$1(requiredChild$1(constructor, "value"), "body"));
 			let insertAt = 0;
-			if (node.superClass) {
-				const superIndex = body.findIndex((stmt) => stmt.type == "ExpressionStatement" && stmt.expression.type == "CallExpression" && stmt.expression.callee.type == "Super");
+			if (childNode$2(node, "superClass")) {
+				const superIndex = body.findIndex((stmt) => {
+					const expression = childNode$2(stmt, "expression");
+					const callee = expression ? childNode$2(expression, "callee") : null;
+					return stmt.type == "ExpressionStatement" && expression?.type == "CallExpression" && callee?.type == "Super";
+				});
 				insertAt = superIndex == -1 ? 0 : superIndex + 1;
 			}
-			body.splice.apply(body, [insertAt, 0].concat(instanceInitializers));
+			body.splice(insertAt, 0, ...instanceInitializers);
 		}
-		node.body.body = methods;
+		setNodeField$1(classBody, "body", methods);
 		const privateDeclarations = Object.keys(privateStores).map((name) => {
 			return {
 				type: "VariableDeclaration",
@@ -3989,36 +4270,73 @@ var Normalizer = class {
 		if (privateDeclarations.length == 0 && staticAssignments.length == 0) return node;
 		return {
 			type: "BlockStatement",
-			body: privateDeclarations.concat([node]).concat(staticAssignments)
+			body: [
+				...privateDeclarations,
+				node,
+				...staticAssignments
+			]
 		};
 	}
 	lowerPrivateMembers(node, privateStores) {
 		traverser_default.traverse(node, [], (child, stack) => {
 			const parentFrame = stack[1];
 			if (child.type == "MemberExpression" && parentFrame && parentFrame.node.type == "AssignmentExpression" && parentFrame.key == "left") return child;
-			if (child.type == "AssignmentExpression" && child.left.type == "MemberExpression" && child.left.property.type == "PrivateIdentifier" && privateStores[child.left.property.name]) return {
-				type: "CallExpression",
-				callee: {
-					type: "MemberExpression",
-					object: {
-						type: "Identifier",
-						name: privateStores[child.left.property.name]
+			const left = childNode$2(child, "left");
+			if (child.type == "AssignmentExpression" && left?.type == "MemberExpression") {
+				const property = childNode$2(left, "property");
+				const storeName = property?.type == "PrivateIdentifier" ? privateStores[nodeName$4(property) || ""] : void 0;
+				if (storeName) return {
+					type: "CallExpression",
+					callee: {
+						type: "MemberExpression",
+						object: {
+							type: "Identifier",
+							name: storeName
+						},
+						property: {
+							type: "Identifier",
+							name: "set"
+						},
+						computed: false
 					},
-					property: {
-						type: "Identifier",
-						name: "set"
-					},
-					computed: false
-				},
-				arguments: [child.left.object, child.right]
-			};
-			if (child.type == "MemberExpression" && child.property.type == "PrivateIdentifier" && privateStores[child.property.name]) return weakMapGetExpression(privateStores[child.property.name], child.object);
+					arguments: [requiredChild$1(left, "object"), requiredChild$1(child, "right")]
+				};
+			}
+			if (child.type == "MemberExpression") {
+				const property = childNode$2(child, "property");
+				const storeName = property?.type == "PrivateIdentifier" ? privateStores[nodeName$4(property) || ""] : void 0;
+				if (storeName) return weakMapGetExpression(storeName, requiredChild$1(child, "object"));
+			}
 			return child;
 		});
 	}
 };
 //#endregion
 //#region src/processors/postprocessing.ts
+function astNodeArray(value) {
+	return Array.isArray(value) ? value : [];
+}
+function nodeArguments$1(node) {
+	return astNodeArray(node.arguments);
+}
+function setNodeArguments(node, args) {
+	node.arguments = args;
+}
+function nodeBody$1(node) {
+	return astNodeArray(node.body);
+}
+function setNodeBody(node, body) {
+	node.body = body;
+}
+function nodeConsequent(node) {
+	return astNodeArray(node.consequent);
+}
+function setNodeConsequent(node, consequent) {
+	node.consequent = consequent;
+}
+function isIdentifierNamed(value, name) {
+	return typeof value == "object" && value !== null && value.type == "Identifier" && value.name == name;
+}
 /**
 * Merges nested bind calls like
 * toildefender$bind(toildefender$bind(main, 1234), 5678)
@@ -4029,8 +4347,11 @@ var Normalizer = class {
 */
 function mergeNestedBinds(node) {
 	assert.ok(estest_default.isNode(node));
-	if (isBindCall(node)) return mergeNestedBinds(node.arguments[0]).concat(node.arguments.slice(1));
-	else return [node];
+	if (isBindCall(node)) {
+		const args = nodeArguments$1(node);
+		const first = args[0];
+		return first ? mergeNestedBinds(first).concat(args.slice(1)) : [];
+	} else return [node];
 }
 /**
 * Checks whether node is a call to toildefender$bind.
@@ -4039,7 +4360,7 @@ function mergeNestedBinds(node) {
 */
 function isBindCall(node) {
 	assert.ok(estest_default.isNode(node));
-	return node.type == "CallExpression" && node.callee.type == "Identifier" && node.callee.name == "toildefender$bind";
+	return node.type == "CallExpression" && isIdentifierNamed(node.callee, "toildefender$bind");
 }
 var Postprocessing = class {
 	logger;
@@ -4054,9 +4375,9 @@ var Postprocessing = class {
 	do(ast) {
 		assert.ok(estest_default.isNode(ast));
 		return traverser_default.traverse(ast, [], (node, stack) => {
-			if (isBindCall(node)) node.arguments = mergeNestedBinds(node);
-			else if (node.type == "BlockStatement" || node.type == "Program") node.body = node.body.filter((x) => estest_default.isNode(x) && x.type != "EmptyStatement");
-			else if (node.type == "SwitchCase") node.consequent = node.consequent.filter((x) => estest_default.isNode(x) && x.type != "EmptyStatement");
+			if (isBindCall(node)) setNodeArguments(node, mergeNestedBinds(node));
+			else if (node.type == "BlockStatement" || node.type == "Program") setNodeBody(node, nodeBody$1(node).filter((x) => estest_default.isNode(x) && x.type != "EmptyStatement"));
+			else if (node.type == "SwitchCase") setNodeConsequent(node, nodeConsequent(node).filter((x) => estest_default.isNode(x) && x.type != "EmptyStatement"));
 			return node;
 		});
 	}
@@ -4107,10 +4428,18 @@ var RESERVED_WORDS = new Set([
 ]);
 var FIRST_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
 var REST_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$0123456789";
+function nodeKind$1(node) {
+	const kind = node.kind;
+	return typeof kind == "string" ? kind : void 0;
+}
+function nodeName$3(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : void 0;
+}
 function containsModernBindings(ast) {
 	let found = false;
 	traverser_default.traverseEx(ast, [], function(node) {
-		if (node.type == "VariableDeclaration" && node.kind != "var" || node.type == "ClassDeclaration" || node.type == "ClassExpression") {
+		if (node.type == "VariableDeclaration" && nodeKind$1(node) != "var" || node.type == "ClassDeclaration" || node.type == "ClassExpression") {
 			found = true;
 			this.abort();
 		}
@@ -4119,11 +4448,11 @@ function containsModernBindings(ast) {
 	return found;
 }
 function shortName(index) {
-	let name = FIRST_CHARS[index % 54];
+	let name = FIRST_CHARS[index % 54] || "";
 	index = Math.floor(index / 54);
 	while (index > 0) {
 		index -= 1;
-		name += REST_CHARS[index % 64];
+		name += REST_CHARS[index % 64] || "";
 		index = Math.floor(index / 64);
 	}
 	return name;
@@ -4132,18 +4461,19 @@ function collectUnresolvedNames(scopeManager) {
 	const names = /* @__PURE__ */ new Set();
 	scopeManager.scopes.forEach((scope) => {
 		scope.through.forEach((reference) => {
-			if (!reference.resolved) names.add(reference.identifier.name);
+			const name = nodeName$3(reference.identifier);
+			if (!reference.resolved && name) names.add(name);
 		});
 	});
 	return names;
 }
 function isRenamableVariable(scope, variable, unresolvedNames) {
 	if (scope.type == "global") return false;
-	if (typeof variable.name == "string" && variable.name.indexOf("toildefender$anon$") === 0 && unresolvedNames.has(variable.name)) return false;
+	if (variable.name.indexOf("toildefender$anon$") === 0 && unresolvedNames.has(variable.name)) return false;
 	if (variable.name == "arguments" || variable.name == "undefined") return false;
 	if (variable.tainted) return false;
-	if (!variable.identifiers || variable.identifiers.length == 0) return false;
-	if (variable.defs && variable.defs.some((def) => def.type == "ClassName")) return false;
+	if (variable.identifiers.length == 0) return false;
+	if (variable.defs?.some((def) => def.type == "ClassName")) return false;
 	return true;
 }
 function reserveUnrenamedNames(scopeManager, renamable) {
@@ -4153,14 +4483,15 @@ function reserveUnrenamedNames(scopeManager, renamable) {
 			if (!renamable.has(variable)) reserved.add(variable.name);
 		});
 		scope.through.forEach((reference) => {
-			if (!reference.resolved) reserved.add(reference.identifier.name);
+			const name = nodeName$3(reference.identifier);
+			if (!reference.resolved && name) reserved.add(name);
 		});
 	});
 	return reserved;
 }
 function buildParentMap(ast) {
 	const parents = /* @__PURE__ */ new WeakMap();
-	traverser_default.traverse(ast, [], function(node, stack) {
+	traverser_default.traverse(ast, [], (node, stack) => {
 		const parentFrame = stack[1];
 		if (parentFrame) parents.set(node, parentFrame.node);
 		return node;
@@ -4169,18 +4500,21 @@ function buildParentMap(ast) {
 }
 function renameIdentifier(identifier, name, parents) {
 	const parent = parents.get(identifier);
-	if (parent && parent.type == "Property" && parent.shorthand === true && (parent.key === identifier || parent.value === identifier)) {
-		parent.shorthand = false;
-		parent.key = {
+	const parentFields = parent;
+	if (parent && parent.type == "Property" && parentFields?.shorthand === true && (parentFields.key === identifier || parentFields.value === identifier)) {
+		parentFields.shorthand = false;
+		const key = {
 			type: "Identifier",
-			name: identifier.name
+			name: nodeName$3(identifier) || ""
 		};
-		parent.value = {
+		const value = {
 			type: "Identifier",
 			name
 		};
-		parents.set(parent.key, parent);
-		parents.set(parent.value, parent);
+		parentFields.key = key;
+		parentFields.value = value;
+		parents.set(key, parent);
+		parents.set(value, parent);
 		return;
 	}
 	identifier.name = name;
@@ -4242,6 +4576,50 @@ var Uglifier = class {
 };
 //#endregion
 //#region src/processors/identifiers.ts
+function nodeArray$1(value) {
+	return Array.isArray(value) ? value : [];
+}
+function nodeFields$1(node) {
+	return node;
+}
+function childNode$1(node, key) {
+	const value = nodeFields$1(node)[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function setChildNode(node, key, value) {
+	nodeFields$1(node)[key] = value;
+}
+function nodeName$2(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function setNodeName(node, name) {
+	node.name = name;
+}
+function nodeValue$1(node) {
+	return node?.value;
+}
+function setNodeComputed(node, computed) {
+	node.computed = computed;
+}
+function nodeComputed(node) {
+	return node.computed === true;
+}
+function nodeOperator$1(node) {
+	const operator = node.operator;
+	return typeof operator == "string" ? operator : null;
+}
+function mutableBody$1(node) {
+	const body = nodeFields$1(node).body;
+	if (Array.isArray(body)) return body;
+	const nextBody = [];
+	nodeFields$1(node).body = nextBody;
+	return nextBody;
+}
+function scopeList(scopeManager) {
+	const scopes = scopeManager.scopes;
+	return Array.isArray(scopes) ? scopes : [];
+}
 function literal$1(value) {
 	return {
 		type: "Literal",
@@ -4254,20 +4632,27 @@ function encodeObjectKey(key, salt, index) {
 	return encoded;
 }
 function objectKey(prop) {
-	return prop.key.name || prop.key.value;
+	const key = childNode$1(prop, "key");
+	return nodeName$2(key) || String(nodeValue$1(key));
+}
+function propertyValue(prop) {
+	return childNode$1(prop, "value") || {
+		type: "Identifier",
+		name: "undefined"
+	};
 }
 function canPackObjectExpression(node) {
-	return node.properties.every((prop) => prop.type != "SpreadElement" && prop.key);
+	return nodeArray$1(nodeFields$1(node).properties).every((prop) => prop.type != "SpreadElement" && childNode$1(prop, "key") !== null);
 }
 function isBigIntLiteral(node) {
-	return node.type == "Literal" && typeof node.value == "bigint";
+	return node.type == "Literal" && typeof nodeValue$1(node) == "bigint";
 }
 function canMoveLiteral(node) {
-	if (node.type != "Literal" || isBigIntLiteral(node) || node.regex) return false;
-	return typeof node.value == "string";
+	if (node.type != "Literal" || isBigIntLiteral(node) || nodeFields$1(node).regex) return false;
+	return typeof nodeValue$1(node) == "string";
 }
 function isNumericVmInternalFunction$1(stack) {
-	return stack.some((frame) => frame.node && frame.node.toildefender$numericVmInternal === true);
+	return stack.some((frame) => frame.node.toildefender$numericVmInternal === true);
 }
 var Identifiers = class {
 	logger;
@@ -4287,24 +4672,25 @@ var Identifiers = class {
 	*/
 	hasParentAcceptingUndefined(node) {
 		const parent = this.esutils.getParent(node);
-		return parent && parent.type == "UnaryExpression" && _.includes(["typeof", "delete"], parent.operator);
+		return Boolean(parent && parent.type == "UnaryExpression" && ["typeof", "delete"].includes(nodeOperator$1(parent) || ""));
 	}
 	/**
 	* Replace property references like obj.prop with obj["prop"].
 	* @param {Node} ast Root node
-	* @returns {Node} Root node
+	* @returns {Node}
 	*/
 	computeProperties(ast) {
 		assert.ok(estest_default.isNode(ast));
 		ast = traverser_default.traverse(ast, [], (node, stack) => {
 			if (isNumericVmInternalFunction$1(stack)) return node;
-			if (node.type == "MemberExpression" && !node.computed) {
-				assert(node.property.type == "Identifier");
-				node.property = {
+			if (node.type == "MemberExpression" && !nodeComputed(node)) {
+				const property = childNode$1(node, "property");
+				assert(property?.type == "Identifier");
+				setChildNode(node, "property", {
 					type: "Literal",
-					value: node.property.name
-				};
-				node.computed = true;
+					value: nodeName$2(property) || ""
+				});
+				setNodeComputed(node, true);
 			}
 			return node;
 		});
@@ -4313,23 +4699,22 @@ var Identifiers = class {
 	/**
 	* Replace objects with an array via toildefender$toObject.
 	* @param {Node} ast Root node
-	* @returns {Node} Root node
+	* @returns {Node}
 	*/
-	arrayizeObjects(ast, options) {
+	arrayizeObjects(ast, options = {}) {
 		assert.ok(estest_default.isNode(ast));
-		options = options || {};
 		ast = traverser_default.traverse(ast, [], (node, stack) => {
 			if (isNumericVmInternalFunction$1(stack)) return node;
 			if (node.type == "ObjectExpression") {
 				if (options.objectPacking === false) return node;
 				if (!canPackObjectExpression(node)) return node;
+				const properties = nodeArray$1(nodeFields$1(node).properties);
 				const salt = utils_default.random(1, 65535);
-				const schema = [salt, node.properties.length];
+				const schema = [salt, properties.length];
 				const values = [];
-				node.properties.forEach((prop) => {
-					const key = objectKey(prop);
-					encodeObjectKey(String(key), salt, values.length).forEach((value) => schema.push(value));
-					values.push(prop.value);
+				properties.forEach((prop) => {
+					encodeObjectKey(objectKey(prop), salt, values.length).forEach((value) => schema.push(value));
+					values.push(propertyValue(prop));
 				});
 				return {
 					type: "CallExpression",
@@ -4338,7 +4723,7 @@ var Identifiers = class {
 						name: "toildefender$toObject"
 					},
 					arguments: [
-						literal$1(String(utils_default.hash(schema.join(",")))),
+						literal$1(utils_default.hash(schema.join(","))),
 						{
 							type: "ArrayExpression",
 							elements: schema.map(literal$1)
@@ -4358,19 +4743,22 @@ var Identifiers = class {
 		assert.ok(estest_default.isNode(ast));
 		const rng = new utils_default.UniqueRandomAlpha(3);
 		this.esutils.setParentsRecursive(ast);
-		scopeManager.scopes.forEach((scope) => {
+		scopeList(scopeManager).forEach((scope) => {
 			/**
 			* That could cause problems if there are multiple unresolved
 			* references with the same name. (is that even possible?)
 			*/
 			const replaced = new utils_default.HashMap();
 			scope.references.filter((reference) => !utils_default.isResolvedReference(reference)).forEach((reference) => {
-				if (replaced.exists(reference.identifier.name)) reference.identifier.name = replaced.get(reference.identifier.name);
+				const identifierName = nodeName$2(reference.identifier);
+				if (!identifierName) return;
+				const previous = replaced.get(identifierName);
+				if (previous) setNodeName(reference.identifier, previous);
 				else if (!this.hasParentAcceptingUndefined(reference.identifier)) {
 					const name = "$$ident$" + rng.get();
-					replaced.set(reference.identifier.name, name);
+					replaced.set(identifierName, name);
 					let init;
-					if (reference.identifier.name == "undefined") init = {
+					if (identifierName == "undefined") init = {
 						type: "Identifier",
 						name: "undefined"
 					};
@@ -4385,7 +4773,7 @@ var Identifiers = class {
 								prefix: true,
 								argument: {
 									type: "Identifier",
-									name: reference.identifier.name
+									name: identifierName
 								}
 							},
 							right: {
@@ -4395,7 +4783,7 @@ var Identifiers = class {
 						},
 						consequent: {
 							type: "Identifier",
-							name: reference.identifier.name
+							name: identifierName
 						},
 						alternate: {
 							type: "Identifier",
@@ -4414,7 +4802,7 @@ var Identifiers = class {
 							init
 						}]
 					});
-					reference.identifier.name = name;
+					setNodeName(reference.identifier, name);
 				}
 			});
 		});
@@ -4426,17 +4814,18 @@ var Identifiers = class {
 	* @param {ScopeManager} scopeManager Scope manager
 	* @returns {Node} Root node
 	*/
-	moveLiterals(ast, scopeManager) {
+	moveLiterals(ast, _scopeManager) {
 		assert.ok(estest_default.isNode(ast));
-		new utils_default.UniqueRandomAlpha(3);
 		const vars = [];
 		ast = traverser_default.traverse(ast, [], (node, stack) => {
 			if (isNumericVmInternalFunction$1(stack)) return node;
-			if (canMoveLiteral(node) && stack.length > 0 && stack[1].node.type != "Property") {
-				let idx = vars.indexOf(node.value);
+			const parentFrame = stack[1];
+			if (canMoveLiteral(node) && stack.length > 0 && parentFrame?.node.type != "Property") {
+				const value = String(nodeValue$1(node));
+				let idx = vars.indexOf(value);
 				if (idx == -1) {
 					idx = vars.length;
-					vars.push(node.value);
+					vars.push(value);
 				}
 				return {
 					type: "MemberExpression",
@@ -4453,7 +4842,7 @@ var Identifiers = class {
 			}
 			return node;
 		});
-		ast.body.splice(0, 0, {
+		mutableBody$1(ast).splice(0, 0, {
 			type: "VariableDeclaration",
 			kind: "var",
 			declarations: [{
@@ -4476,6 +4865,49 @@ var Identifiers = class {
 };
 //#endregion
 //#region src/processors/literals.ts
+function astArray(value) {
+	return Array.isArray(value) ? value : [];
+}
+function mutableBody(node) {
+	const body = node.body;
+	if (Array.isArray(body)) return body;
+	const nextBody = [];
+	node.body = nextBody;
+	return nextBody;
+}
+function literalStringValue(node) {
+	const value = node.value;
+	return typeof value == "string" ? value : null;
+}
+function isComputed(node) {
+	return node.computed === true;
+}
+function isNumericVmInternalFunction(stack) {
+	return stack.some((frame) => frame.node.toildefender$numericVmInternal === true);
+}
+function isUnencodedPropertyKey(stack) {
+	const parentFrame = stack[1];
+	if (!parentFrame || parentFrame.node.type != "Property") return false;
+	return parentFrame.key == "key" && !isComputed(parentFrame.node);
+}
+function templateCookedValue(quasi) {
+	const value = quasi.value;
+	if (typeof value == "object" && value !== null) {
+		const cooked = value.cooked;
+		return typeof cooked == "string" ? cooked : "";
+	}
+	return "";
+}
+function regexInfo(node) {
+	const regex = node.regex;
+	if (typeof regex != "object" || regex === null) return null;
+	const pattern = regex.pattern;
+	const flags = regex.flags;
+	return {
+		pattern: typeof pattern == "string" ? pattern : "",
+		flags: typeof flags == "string" ? flags : ""
+	};
+}
 /**
 * Generate string generator from string.
 * @param {string} str
@@ -4489,27 +4921,28 @@ function makeStringGenerator(str) {
 		fragments.push(str.substring(0, len));
 		str = str.substring(len);
 	}
-	let block = {
-		type: "BlockStatement",
-		body: [{
-			type: "VariableDeclaration",
-			kind: "var",
-			declarations: [{
-				type: "VariableDeclarator",
-				id: {
-					type: "Identifier",
-					name: "str"
-				},
-				init: {
-					type: "Literal",
-					value: ""
-				}
-			}]
+	const body = [{
+		type: "VariableDeclaration",
+		kind: "var",
+		declarations: [{
+			type: "VariableDeclarator",
+			id: {
+				type: "Identifier",
+				name: "str"
+			},
+			init: {
+				type: "Literal",
+				value: ""
+			}
 		}]
+	}];
+	const block = {
+		type: "BlockStatement",
+		body
 	};
 	fragments.forEach((fragment) => {
 		const decoded = makeStringByteArrayCall(fragment);
-		block.body.push({
+		body.push({
 			type: "ExpressionStatement",
 			expression: {
 				type: "BinaryExpression",
@@ -4522,7 +4955,7 @@ function makeStringGenerator(str) {
 			}
 		});
 	});
-	block.body.push({
+	body.push({
 		type: "ReturnStatement",
 		argument: {
 			type: "Identifier",
@@ -4554,17 +4987,9 @@ function makeStringByteArrayCall(str) {
 		},
 		arguments: str.split("").map((x) => ({
 			type: "Literal",
-			value: x.charCodeAt()
+			value: x.charCodeAt(0)
 		}))
 	};
-}
-function isUnencodedPropertyKey(stack) {
-	const parentFrame = stack[1];
-	if (!parentFrame || parentFrame.node.type != "Property") return false;
-	return parentFrame.key == "key" && parentFrame.node.computed !== true;
-}
-function isNumericVmInternalFunction(stack) {
-	return stack.some((frame) => frame.node && frame.node.toildefender$numericVmInternal === true);
 }
 function makeStringExpression(str) {
 	if (str.length == 0) return {
@@ -4593,12 +5018,14 @@ function concatExpressions(left, right) {
 }
 function makeTemplateExpression(node) {
 	assert.equal(node.type, "TemplateLiteral");
-	let expression;
-	for (let i = 0; i < node.quasis.length; i += 1) {
-		const quasi = node.quasis[i];
-		const quasiExpression = makeStringExpression(quasi.value && typeof quasi.value.cooked == "string" ? quasi.value.cooked : "");
+	const quasis = astArray(node.quasis);
+	const expressions = astArray(node.expressions);
+	let expression = null;
+	for (let i = 0; i < quasis.length; i += 1) {
+		const quasiExpression = makeStringExpression(templateCookedValue(quasis[i]));
 		expression = expression ? concatExpressions(expression, quasiExpression) : quasiExpression;
-		if (i < node.expressions.length) expression = concatExpressions(expression, makeStringCallExpression(node.expressions[i]));
+		const templateExpression = expressions[i];
+		if (templateExpression) expression = concatExpressions(expression, makeStringCallExpression(templateExpression));
 	}
 	return expression || {
 		type: "Literal",
@@ -4607,14 +5034,15 @@ function makeTemplateExpression(node) {
 }
 function makeRegexExpression(node) {
 	assert.equal(node.type, "Literal");
-	assert.ok(node.regex);
+	const regex = regexInfo(node);
+	assert.ok(regex);
 	return {
 		type: "NewExpression",
 		callee: {
 			type: "Identifier",
 			name: "RegExp"
 		},
-		arguments: [makeStringExpression(node.regex.pattern || ""), makeStringExpression(node.regex.flags || "")]
+		arguments: [makeStringExpression(regex.pattern), makeStringExpression(regex.flags)]
 	};
 }
 var Literals = class {
@@ -4637,10 +5065,11 @@ var Literals = class {
 		const stringMap = {};
 		ast = traverser_default.traverse(ast, [], (node, stack) => {
 			if (isNumericVmInternalFunction(stack)) return node;
-			if (node.type == "Literal" && typeof node.value == "string") {
-				let idx = stringMap["_" + node.value];
+			const value = literalStringValue(node);
+			if (node.type == "Literal" && value !== null) {
+				let idx = stringMap["_" + value];
 				if (!idx) {
-					stringMap["_" + node.value] = idx = strings.length;
+					stringMap["_" + value] = idx = strings.length;
 					strings.push(node);
 				}
 				return {
@@ -4655,7 +5084,7 @@ var Literals = class {
 			}
 			return node;
 		});
-		ast.body.splice(0, 0, {
+		mutableBody(ast).splice(0, 0, {
 			type: "VariableDeclaration",
 			kind: "var",
 			declarations: [{
@@ -4679,8 +5108,9 @@ var Literals = class {
 		ast = traverser_default.traverse(ast, [], (node, stack) => {
 			if (isNumericVmInternalFunction(stack)) return node;
 			if (node.type == "TemplateLiteral") return makeTemplateExpression(node);
-			if (node.type == "Literal" && node.regex) return makeRegexExpression(node);
-			if (node.type == "Literal" && typeof node.value == "string" && stack.length > 1 && !isUnencodedPropertyKey(stack)) return makeStringGenerator(node.value);
+			if (node.type == "Literal" && regexInfo(node)) return makeRegexExpression(node);
+			const value = literalStringValue(node);
+			if (node.type == "Literal" && value !== null && stack.length > 1 && !isUnencodedPropertyKey(stack)) return makeStringGenerator(value);
 			return node;
 		});
 		return ast;
@@ -5073,6 +5503,64 @@ var BASES = [
 	65537
 ];
 var SMALL_LIMIT = 128;
+function nodeFields(node) {
+	return node;
+}
+function nodeArray(value) {
+	return Array.isArray(value) ? value : [];
+}
+function childNode(node, key) {
+	const value = nodeFields(node)[key];
+	return estest_default.isNode(value) ? value : null;
+}
+function requiredChild(node, key) {
+	const child = childNode(node, key);
+	assert.ok(child, `Missing ${node.type}.${key}`);
+	return child;
+}
+function setNodeField(node, key, value) {
+	nodeFields(node)[key] = value;
+}
+function nodeName$1(node) {
+	const name = node?.name;
+	return typeof name == "string" ? name : null;
+}
+function nodeValue(node) {
+	return node?.value;
+}
+function nodeOperator(node) {
+	const operator = node.operator;
+	return typeof operator == "string" ? operator : null;
+}
+function nodeKind(node) {
+	const kind = node.kind;
+	return typeof kind == "string" ? kind : null;
+}
+function nodeFlag(node, key) {
+	return node[key] === true;
+}
+function bodyArray(node) {
+	return nodeArray(nodeFields(node).body);
+}
+function nodeParams$1(node) {
+	return nodeArray(nodeFields(node).params);
+}
+function nodeDeclarations(node) {
+	return nodeArray(nodeFields(node).declarations);
+}
+function nodeElements(node) {
+	const elements = nodeFields(node).elements;
+	return Array.isArray(elements) ? elements.map((element) => estest_default.isNode(element) ? element : null) : [];
+}
+function nodeProperties(node) {
+	return nodeArray(nodeFields(node).properties);
+}
+function nodeExpressions(node) {
+	return nodeArray(nodeFields(node).expressions);
+}
+function nodeArguments(node) {
+	return nodeArray(nodeFields(node).arguments);
+}
 function literal(value) {
 	return {
 		type: "Literal",
@@ -5154,11 +5642,11 @@ function variableDeclaration(name, init) {
 	};
 }
 function functionName(node) {
-	return node.id && node.id.name ? node.id.name : "";
+	return nodeName$1(childNode(node, "id")) || "";
 }
 function markNumericVmInternal(ast) {
 	return traverser_default.traverse(ast, [], function(node) {
-		if (estest_default.isFunction(node)) node.toildefender$numericVmInternal = true;
+		if (estest_default.isFunction(node)) setNodeField(node, "toildefender$numericVmInternal", true);
 		return node;
 	});
 }
@@ -5199,7 +5687,11 @@ function bigintLiteral(value) {
 }
 function replaceStaticBigIntCalls(ast) {
 	return traverser_default.traverse(ast, [], function(node) {
-		if (node.type === "CallExpression" && node.callee.type === "Identifier" && node.callee.name === "BigInt" && node.arguments.length === 1 && node.arguments[0].type === "Literal" && typeof node.arguments[0].value === "number" && Number.isInteger(node.arguments[0].value)) return bigintLiteral(node.arguments[0].value);
+		const callee = childNode(node, "callee");
+		const args = nodeArguments(node);
+		const firstArg = args[0];
+		const firstValue = nodeValue(firstArg);
+		if (node.type === "CallExpression" && callee?.type === "Identifier" && nodeName$1(callee) === "BigInt" && args.length === 1 && firstArg?.type === "Literal" && typeof firstValue === "number" && Number.isInteger(firstValue)) return bigintLiteral(firstValue);
 		return node;
 	});
 }
@@ -5213,8 +5705,7 @@ function bigintExpression(value, next) {
 		chunks.push(work % radix);
 		work = work / radix;
 	}
-	let expr;
-	expr = bigintLiteral(chunks[chunks.length - 1]);
+	let expr = bigintLiteral(chunks[chunks.length - 1]);
 	for (let i = chunks.length - 2; i >= 0; i -= 1) expr = binary("+", binary("<<", expr, bigintLiteral(radixBits)), bigintLiteral(chunks[i]));
 	if (value < 0n) expr = {
 		type: "UnaryExpression",
@@ -5316,8 +5807,9 @@ function normalizeMaxFunctions(value) {
 }
 function selectionScore(options, node, index) {
 	const name = functionName(node);
-	const bodySize = node && node.body && node.body.body ? node.body.body.length : 0;
-	return textDigest(String(options.seed) + ":" + index + ":" + name + ":" + bodySize) / 4294967296;
+	const body = childNode(node, "body");
+	const bodySize = body ? bodyArray(body).length : 0;
+	return textDigest(`${options.seed}:${index}:${name}:${bodySize}`) / 4294967296;
 }
 function constantDigest(constants) {
 	let hash = textDigest("DJS-HMESH/constants/v1");
@@ -5367,7 +5859,7 @@ function makeChaff(next, tokenCount, ratio) {
 }
 function buildHashMeshRecord(record, encryptedTokens, opValues, constants, dialect, options) {
 	const ratio = typeof options.chaffRatio === "number" ? options.chaffRatio : .55;
-	const buildSalt = hashSeed(String(options.seed || "toildefender-hmesh") + ":DJS-HMESH/build/v1");
+	const buildSalt = hashSeed(`${options.seed || "toildefender-hmesh"}:DJS-HMESH/build/v1`);
 	const functionId = meshMix(buildSalt, dialect.seed);
 	const chunkId = dialect.next() >>> 0;
 	const constDigest = constantDigest(constants);
@@ -5396,7 +5888,7 @@ function buildHashMeshRecord(record, encryptedTokens, opValues, constants, diale
 	record.mesh = mesh;
 }
 function isSimplePattern(node) {
-	return node && node.type === "Identifier";
+	return node?.type === "Identifier";
 }
 function containsNestedFunction(node) {
 	let found = false;
@@ -5409,521 +5901,553 @@ function containsNestedFunction(node) {
 	});
 	return found;
 }
-function Compiler(fn, dialect, options) {
-	this.fn = fn;
-	this.dialect = dialect;
-	this.options = options || {};
-	this.instructions = [];
-	this.labelId = 0;
-	this.params = {};
-	this.functionScope = Object.create(null);
-	this.scopeStack = [];
-	this.localCount = 0;
-	this.constants = [];
-	this.constantKeys = {};
-	this.references = [];
-	this.referenceKeys = {};
-}
-Compiler.prototype.label = function() {
-	return "L" + this.labelId++;
-};
-Compiler.prototype.mark = function(name) {
-	this.instructions.push({ label: name });
-};
-Compiler.prototype.emit = function(op) {
-	this.instructions.push({
-		op,
-		args: Array.prototype.slice.call(arguments, 1)
-	});
-};
-Compiler.prototype.pushScope = function() {
-	const scope = Object.create(null);
-	this.scopeStack.push(scope);
-	return scope;
-};
-Compiler.prototype.popScope = function() {
-	this.scopeStack.pop();
-};
-Compiler.prototype.currentScope = function() {
-	if (this.scopeStack.length === 0) return this.pushScope();
-	return this.scopeStack[this.scopeStack.length - 1];
-};
-Compiler.prototype.declareLocal = function(name, functionScoped) {
-	const scope = functionScoped ? this.functionScope : this.currentScope();
-	if (!Object.prototype.hasOwnProperty.call(scope, name)) scope[name] = this.localCount++;
-	return scope[name];
-};
-Compiler.prototype.resolveLocal = function(name) {
-	for (let i = this.scopeStack.length - 1; i >= 0; i -= 1) {
-		const scope = this.scopeStack[i];
-		if (Object.prototype.hasOwnProperty.call(scope, name)) return scope[name];
+var Compiler = class {
+	fn;
+	dialect;
+	options;
+	instructions = [];
+	labelId = 0;
+	params = {};
+	functionScope = Object.create(null);
+	scopeStack = [];
+	localCount = 0;
+	constants = [];
+	constantKeys = Object.create(null);
+	references = [];
+	referenceKeys = Object.create(null);
+	constructor(fn, dialect, options) {
+		this.fn = fn;
+		this.dialect = dialect;
+		this.options = options;
 	}
-	if (Object.prototype.hasOwnProperty.call(this.functionScope, name)) return this.functionScope[name];
-	return null;
-};
-Compiler.prototype.addConstant = function(kind, value) {
-	const key = kind + ":" + String(value);
-	if (Object.prototype.hasOwnProperty.call(this.constantKeys, key)) return this.constantKeys[key];
-	const index = this.constants.length;
-	this.constantKeys[key] = index;
-	this.constants.push({
-		kind,
-		value
-	});
-	return index;
-};
-Compiler.prototype.addReference = function(value) {
-	const key = String(value);
-	if (Object.prototype.hasOwnProperty.call(this.referenceKeys, key)) return this.referenceKeys[key];
-	const index = this.references.length;
-	this.referenceKeys[key] = index;
-	this.references.push(key);
-	return index;
-};
-Compiler.prototype.validateBindings = function() {
-	const self = this;
-	this.fn.params.forEach(function(param, index) {
-		if (!isSimplePattern(param)) throw new Error("unsupported parameter pattern");
-		self.params[param.name] = index;
-	});
-	traverser_default.traverseEx(this.fn.body, [], function(node) {
-		if (node !== self.fn.body && estest_default.isFunction(node)) {
-			this.abort();
-			return node;
+	label() {
+		return `L${this.labelId++}`;
+	}
+	mark(name) {
+		this.instructions.push({
+			label: name,
+			args: []
+		});
+	}
+	emit(op, ...args) {
+		this.instructions.push({
+			op,
+			args
+		});
+	}
+	pushScope() {
+		const scope = Object.create(null);
+		this.scopeStack.push(scope);
+		return scope;
+	}
+	popScope() {
+		this.scopeStack.pop();
+	}
+	currentScope() {
+		if (this.scopeStack.length === 0) return this.pushScope();
+		return this.scopeStack[this.scopeStack.length - 1];
+	}
+	declareLocal(name, functionScoped) {
+		const scope = functionScoped ? this.functionScope : this.currentScope();
+		if (!Object.prototype.hasOwnProperty.call(scope, name)) scope[name] = this.localCount++;
+		return scope[name];
+	}
+	resolveLocal(name) {
+		for (let i = this.scopeStack.length - 1; i >= 0; i -= 1) {
+			const scope = this.scopeStack[i];
+			if (Object.prototype.hasOwnProperty.call(scope, name)) return scope[name];
 		}
-		if (node.type === "VariableDeclarator") {
-			if (!isSimplePattern(node.id)) throw new Error("unsupported declaration pattern");
-		}
-		return node;
-	});
-};
-Compiler.prototype.compile = function() {
-	if (!this.fn.body || this.fn.body.type !== "BlockStatement") throw new Error("unsupported function body");
-	if (containsNestedFunction(this.fn.body)) throw new Error("nested functions are not virtualized");
-	this.validateBindings();
-	this.pushScope();
-	this.compileBlock(this.fn.body, false);
-	this.popScope();
-	this.emit("PUSH_UNDEFINED");
-	this.emit("RETURN");
-	return this.finish();
-};
-Compiler.prototype.compileBlock = function(block, createScope) {
-	const self = this;
-	if (createScope !== false) this.pushScope();
-	block.body.forEach(function(stmt) {
-		self.compileStatement(stmt);
-	});
-	if (createScope !== false) this.popScope();
-};
-Compiler.prototype.compileStatement = function(stmt) {
-	switch (stmt.type) {
-		case "BlockStatement":
-			this.compileBlock(stmt, true);
-			return;
-		case "VariableDeclaration":
-			for (let i = 0; i < stmt.declarations.length; i += 1) {
-				const decl = stmt.declarations[i];
-				const slot = this.declareLocal(decl.id.name, stmt.kind === "var");
-				if (decl.init) this.compileExpression(decl.init);
-				else this.emit("PUSH_UNDEFINED");
-				this.emit("STORE_LOCAL", slot);
+		if (Object.prototype.hasOwnProperty.call(this.functionScope, name)) return this.functionScope[name];
+		return null;
+	}
+	addConstant(kind, value) {
+		const key = kind + ":" + String(value);
+		if (Object.prototype.hasOwnProperty.call(this.constantKeys, key)) return this.constantKeys[key];
+		const index = this.constants.length;
+		this.constantKeys[key] = index;
+		this.constants.push({
+			kind,
+			value
+		});
+		return index;
+	}
+	addReference(value) {
+		const key = String(value);
+		if (Object.prototype.hasOwnProperty.call(this.referenceKeys, key)) return this.referenceKeys[key];
+		const index = this.references.length;
+		this.referenceKeys[key] = index;
+		this.references.push(key);
+		return index;
+	}
+	validateBindings() {
+		nodeParams$1(this.fn).forEach((param, index) => {
+			if (!isSimplePattern(param)) throw new Error("unsupported parameter pattern");
+			this.params[nodeName$1(param) || ""] = index;
+		});
+		const body = requiredChild(this.fn, "body");
+		traverser_default.traverseEx(body, [], function(node) {
+			if (node !== body && estest_default.isFunction(node)) {
+				this.abort();
+				return node;
 			}
-			return;
-		case "ExpressionStatement":
-			this.compileExpression(stmt.expression);
+			if (node.type === "VariableDeclarator" && !isSimplePattern(childNode(node, "id"))) throw new Error("unsupported declaration pattern");
+			return node;
+		});
+	}
+	compile() {
+		const body = requiredChild(this.fn, "body");
+		if (body.type !== "BlockStatement") throw new Error("unsupported function body");
+		if (containsNestedFunction(body)) throw new Error("nested functions are not virtualized");
+		this.validateBindings();
+		this.pushScope();
+		this.compileBlock(body, false);
+		this.popScope();
+		this.emit("PUSH_UNDEFINED");
+		this.emit("RETURN");
+		return this.finish();
+	}
+	compileBlock(block, createScope) {
+		if (createScope) this.pushScope();
+		bodyArray(block).forEach((stmt) => {
+			this.compileStatement(stmt);
+		});
+		if (createScope) this.popScope();
+	}
+	compileStatement(stmt) {
+		switch (stmt.type) {
+			case "BlockStatement":
+				this.compileBlock(stmt, true);
+				return;
+			case "VariableDeclaration":
+				for (let i = 0; i < nodeDeclarations(stmt).length; i += 1) {
+					const decl = nodeDeclarations(stmt)[i];
+					const id = requiredChild(decl, "id");
+					const slot = this.declareLocal(nodeName$1(id) || "", nodeKind(stmt) === "var");
+					const init = childNode(decl, "init");
+					if (init) this.compileExpression(init);
+					else this.emit("PUSH_UNDEFINED");
+					this.emit("STORE_LOCAL", slot);
+				}
+				return;
+			case "ExpressionStatement":
+				this.compileExpression(requiredChild(stmt, "expression"));
+				this.emit("POP");
+				return;
+			case "ReturnStatement": {
+				const argument = childNode(stmt, "argument");
+				if (argument) this.compileExpression(argument);
+				else this.emit("PUSH_UNDEFINED");
+				this.emit("RETURN");
+				return;
+			}
+			case "IfStatement": {
+				const elseLabel = this.label();
+				const endLabel = this.label();
+				this.compileExpression(requiredChild(stmt, "test"));
+				this.emit("JMP_FALSE", elseLabel);
+				this.compileStatement(requiredChild(stmt, "consequent"));
+				this.emit("JMP", endLabel);
+				this.mark(elseLabel);
+				const alternate = childNode(stmt, "alternate");
+				if (alternate) this.compileStatement(alternate);
+				this.mark(endLabel);
+				return;
+			}
+			case "WhileStatement": {
+				const start = this.label();
+				const end = this.label();
+				this.mark(start);
+				this.compileExpression(requiredChild(stmt, "test"));
+				this.emit("JMP_FALSE", end);
+				this.compileStatement(requiredChild(stmt, "body"));
+				this.emit("JMP", start);
+				this.mark(end);
+				return;
+			}
+			case "EmptyStatement": return;
+			default: throw new Error("unsupported statement " + stmt.type);
+		}
+	}
+	compileExpression(expr) {
+		switch (expr.type) {
+			case "Literal":
+				this.compileLiteral(expr);
+				return;
+			case "Identifier":
+				this.compileIdentifier(nodeName$1(expr) || "");
+				return;
+			case "ThisExpression":
+				this.emit("PUSH_THIS");
+				return;
+			case "ArrayExpression":
+				this.compileArray(expr);
+				return;
+			case "ObjectExpression":
+				this.compileObject(expr);
+				return;
+			case "UnaryExpression":
+				this.compileUnary(expr);
+				return;
+			case "BinaryExpression":
+				this.compileBinary(expr);
+				return;
+			case "LogicalExpression":
+				this.compileLogical(expr);
+				return;
+			case "AssignmentExpression":
+				this.compileAssignment(expr);
+				return;
+			case "MemberExpression":
+				this.compileMember(expr);
+				return;
+			case "CallExpression":
+				this.compileCall(expr);
+				return;
+			case "ConditionalExpression":
+				this.compileConditional(expr);
+				return;
+			case "SequenceExpression":
+				for (let i = 0; i < nodeExpressions(expr).length; i += 1) {
+					this.compileExpression(nodeExpressions(expr)[i]);
+					if (i + 1 < nodeExpressions(expr).length) this.emit("POP");
+				}
+				return;
+			default: throw new Error("unsupported expression " + expr.type);
+		}
+	}
+	compileLiteral(expr) {
+		const value = nodeValue(expr);
+		if (nodeFields(expr).regex) throw new Error("regex literals are unsupported");
+		if (value === null) this.emit("PUSH_NULL");
+		else if (value === true) this.emit("PUSH_TRUE");
+		else if (value === false) this.emit("PUSH_FALSE");
+		else if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value < SMALL_LIMIT) this.emit("PUSH_SMALL", value);
+		else this.emit("PUSH_CONST", this.addConstant(typeof value, value));
+	}
+	compileIdentifier(name) {
+		if (name === "undefined") this.emit("PUSH_UNDEFINED");
+		else if (name === "arguments") this.emit("PUSH_ARGUMENTS");
+		else {
+			const slot = this.resolveLocal(name);
+			if (slot !== null) this.emit("LOAD_LOCAL", slot);
+			else if (Object.prototype.hasOwnProperty.call(this.params, name)) this.emit("LOAD_ARG", this.params[name]);
+			else this.emit("PUSH_CONST", this.addConstant("reference", name));
+		}
+	}
+	compileArray(expr) {
+		const elements = nodeElements(expr);
+		for (let i = 0; i < elements.length; i += 1) {
+			const element = elements[i];
+			if (element === null) this.emit("PUSH_UNDEFINED");
+			else this.compileExpression(element);
+		}
+		this.emit("MAKE_ARRAY", elements.length);
+	}
+	compileObject(expr) {
+		const properties = nodeProperties(expr);
+		for (let i = 0; i < properties.length; i += 1) {
+			const prop = properties[i];
+			const kind = nodeKind(prop);
+			if (kind && kind !== "init") throw new Error("unsupported object property kind");
+			if (prop.type === "SpreadElement") throw new Error("unsupported object spread");
+			const keyNode = requiredChild(prop, "key");
+			const key = nodeFlag(prop, "computed") ? null : nodeName$1(keyNode) || nodeValue(keyNode);
+			if (key === null) this.compileExpression(keyNode);
+			else this.emit("PUSH_CONST", this.addConstant("string", String(key)));
+			this.compileExpression(requiredChild(prop, "value"));
+		}
+		this.emit("MAKE_OBJECT", properties.length);
+	}
+	compileUnary(expr) {
+		const operator = nodeOperator(expr);
+		if (operator === "void") {
+			this.compileExpression(requiredChild(expr, "argument"));
 			this.emit("POP");
-			return;
-		case "ReturnStatement":
-			if (stmt.argument) this.compileExpression(stmt.argument);
-			else this.emit("PUSH_UNDEFINED");
-			this.emit("RETURN");
-			return;
-		case "IfStatement": {
-			const elseLabel = this.label();
-			const endLabel = this.label();
-			this.compileExpression(stmt.test);
-			this.emit("JMP_FALSE", elseLabel);
-			this.compileStatement(stmt.consequent);
-			this.emit("JMP", endLabel);
-			this.mark(elseLabel);
-			if (stmt.alternate) this.compileStatement(stmt.alternate);
-			this.mark(endLabel);
+			this.emit("PUSH_UNDEFINED");
 			return;
 		}
-		case "WhileStatement": {
-			const start = this.label();
-			const end = this.label();
-			this.mark(start);
-			this.compileExpression(stmt.test);
-			this.emit("JMP_FALSE", end);
-			this.compileStatement(stmt.body);
-			this.emit("JMP", start);
+		this.compileExpression(requiredChild(expr, "argument"));
+		if (operator === "-") this.emit("NEG");
+		else if (operator === "!") this.emit("NOT");
+		else if (operator === "~") this.emit("BIT_NOT");
+		else if (operator === "typeof") this.emit("TYPEOF");
+		else if (operator === "+") this.emit("TO_NUMBER");
+		else throw new Error("unsupported unary operator " + String(operator));
+	}
+	compileBinary(expr) {
+		this.compileExpression(requiredChild(expr, "left"));
+		this.compileExpression(requiredChild(expr, "right"));
+		const map = {
+			"+": "ADD",
+			"-": "SUB",
+			"*": "MUL",
+			"/": "DIV",
+			"%": "MOD",
+			"**": "POW",
+			"==": "EQ",
+			"!=": "NEQ",
+			"===": "STRICT_EQ",
+			"!==": "STRICT_NEQ",
+			"<": "LT",
+			"<=": "LTE",
+			">": "GT",
+			">=": "GTE"
+		};
+		const operator = nodeOperator(expr) || "";
+		if (!map[operator]) throw new Error("unsupported binary operator " + operator);
+		this.emit(map[operator]);
+	}
+	compileLogical(expr) {
+		const end = this.label();
+		const operator = nodeOperator(expr);
+		if (operator === "??") {
+			const right = this.label();
+			this.compileExpression(requiredChild(expr, "left"));
+			this.emit("DUP");
+			this.emit("JMP_NULLISH", right);
+			this.emit("JMP", end);
+			this.mark(right);
+			this.emit("POP");
+			this.compileExpression(requiredChild(expr, "right"));
 			this.mark(end);
 			return;
 		}
-		case "EmptyStatement": return;
-		default: throw new Error("unsupported statement " + stmt.type);
-	}
-};
-Compiler.prototype.compileExpression = function(expr) {
-	switch (expr.type) {
-		case "Literal":
-			this.compileLiteral(expr);
-			return;
-		case "Identifier":
-			this.compileIdentifier(expr.name);
-			return;
-		case "ThisExpression":
-			this.emit("PUSH_THIS");
-			return;
-		case "ArrayExpression":
-			this.compileArray(expr);
-			return;
-		case "ObjectExpression":
-			this.compileObject(expr);
-			return;
-		case "UnaryExpression":
-			this.compileUnary(expr);
-			return;
-		case "BinaryExpression":
-			this.compileBinary(expr);
-			return;
-		case "LogicalExpression":
-			this.compileLogical(expr);
-			return;
-		case "AssignmentExpression":
-			this.compileAssignment(expr);
-			return;
-		case "MemberExpression":
-			this.compileMember(expr);
-			return;
-		case "CallExpression":
-			this.compileCall(expr);
-			return;
-		case "ConditionalExpression":
-			this.compileConditional(expr);
-			return;
-		case "SequenceExpression":
-			for (let i = 0; i < expr.expressions.length; i += 1) {
-				this.compileExpression(expr.expressions[i]);
-				if (i + 1 < expr.expressions.length) this.emit("POP");
-			}
-			return;
-		default: throw new Error("unsupported expression " + expr.type);
-	}
-};
-Compiler.prototype.compileLiteral = function(expr) {
-	if (expr.regex) throw new Error("regex literals are unsupported");
-	if (expr.value === null) this.emit("PUSH_NULL");
-	else if (expr.value === true) this.emit("PUSH_TRUE");
-	else if (expr.value === false) this.emit("PUSH_FALSE");
-	else if (typeof expr.value === "number" && Number.isInteger(expr.value) && expr.value >= 0 && expr.value < SMALL_LIMIT) this.emit("PUSH_SMALL", expr.value);
-	else this.emit("PUSH_CONST", this.addConstant(typeof expr.value, expr.value));
-};
-Compiler.prototype.compileIdentifier = function(name) {
-	if (name === "undefined") this.emit("PUSH_UNDEFINED");
-	else if (name === "arguments") this.emit("PUSH_ARGUMENTS");
-	else {
-		const slot = this.resolveLocal(name);
-		if (slot !== null) this.emit("LOAD_LOCAL", slot);
-		else if (Object.prototype.hasOwnProperty.call(this.params, name)) this.emit("LOAD_ARG", this.params[name]);
-		else this.emit("PUSH_CONST", this.addConstant("reference", name));
-	}
-};
-Compiler.prototype.compileArray = function(expr) {
-	for (let i = 0; i < expr.elements.length; i += 1) if (expr.elements[i] === null) this.emit("PUSH_UNDEFINED");
-	else this.compileExpression(expr.elements[i]);
-	this.emit("MAKE_ARRAY", expr.elements.length);
-};
-Compiler.prototype.compileObject = function(expr) {
-	for (let i = 0; i < expr.properties.length; i += 1) {
-		const prop = expr.properties[i];
-		if (prop.kind && prop.kind !== "init") throw new Error("unsupported object property kind");
-		if (prop.type === "SpreadElement") throw new Error("unsupported object spread");
-		const key = prop.computed ? null : prop.key.name || prop.key.value;
-		if (key === null) this.compileExpression(prop.key);
-		else this.emit("PUSH_CONST", this.addConstant("string", String(key)));
-		this.compileExpression(prop.value);
-	}
-	this.emit("MAKE_OBJECT", expr.properties.length);
-};
-Compiler.prototype.compileUnary = function(expr) {
-	if (expr.operator === "void") {
-		this.compileExpression(expr.argument);
-		this.emit("POP");
-		this.emit("PUSH_UNDEFINED");
-		return;
-	}
-	this.compileExpression(expr.argument);
-	if (expr.operator === "-") this.emit("NEG");
-	else if (expr.operator === "!") this.emit("NOT");
-	else if (expr.operator === "~") this.emit("BIT_NOT");
-	else if (expr.operator === "typeof") this.emit("TYPEOF");
-	else if (expr.operator === "+") this.emit("TO_NUMBER");
-	else throw new Error("unsupported unary operator " + expr.operator);
-};
-Compiler.prototype.compileBinary = function(expr) {
-	this.compileExpression(expr.left);
-	this.compileExpression(expr.right);
-	const map = {
-		"+": "ADD",
-		"-": "SUB",
-		"*": "MUL",
-		"/": "DIV",
-		"%": "MOD",
-		"**": "POW",
-		"==": "EQ",
-		"!=": "NEQ",
-		"===": "STRICT_EQ",
-		"!==": "STRICT_NEQ",
-		"<": "LT",
-		"<=": "LTE",
-		">": "GT",
-		">=": "GTE"
-	};
-	if (!map[expr.operator]) throw new Error("unsupported binary operator " + expr.operator);
-	this.emit(map[expr.operator]);
-};
-Compiler.prototype.compileLogical = function(expr) {
-	const end = this.label();
-	if (expr.operator === "??") {
-		const right = this.label();
-		this.compileExpression(expr.left);
+		if (operator !== "&&" && operator !== "||") throw new Error("unsupported logical operator " + String(operator));
+		this.compileExpression(requiredChild(expr, "left"));
 		this.emit("DUP");
-		this.emit("JMP_NULLISH", right);
-		this.emit("JMP", end);
-		this.mark(right);
+		this.emit(operator === "&&" ? "JMP_FALSE" : "JMP_TRUE", end);
 		this.emit("POP");
-		this.compileExpression(expr.right);
+		this.compileExpression(requiredChild(expr, "right"));
 		this.mark(end);
-		return;
 	}
-	if (expr.operator !== "&&" && expr.operator !== "||") throw new Error("unsupported logical operator " + expr.operator);
-	this.compileExpression(expr.left);
-	this.emit("DUP");
-	this.emit(expr.operator === "&&" ? "JMP_FALSE" : "JMP_TRUE", end);
-	this.emit("POP");
-	this.compileExpression(expr.right);
-	this.mark(end);
-};
-Compiler.prototype.compileAssignment = function(expr) {
-	if (expr.left.type === "Identifier") {
-		const slot = this.resolveLocal(expr.left.name);
-		if (slot === null) throw new Error("unsupported assignment target " + expr.left.name);
-		if (expr.operator === "=") this.compileExpression(expr.right);
-		else {
-			const map = {
-				"+=": "ADD",
-				"-=": "SUB",
-				"*=": "MUL",
-				"/=": "DIV",
-				"%=": "MOD"
-			};
-			if (!map[expr.operator]) throw new Error("unsupported assignment operator " + expr.operator);
-			this.compileIdentifier(expr.left.name);
-			this.compileExpression(expr.right);
-			this.emit(map[expr.operator]);
+	compileAssignment(expr) {
+		const left = requiredChild(expr, "left");
+		const operator = nodeOperator(expr);
+		if (left.type === "Identifier") {
+			const name = nodeName$1(left) || "";
+			const slot = this.resolveLocal(name);
+			if (slot === null) throw new Error("unsupported assignment target " + name);
+			if (operator === "=") this.compileExpression(requiredChild(expr, "right"));
+			else {
+				const map = {
+					"+=": "ADD",
+					"-=": "SUB",
+					"*=": "MUL",
+					"/=": "DIV",
+					"%=": "MOD"
+				};
+				if (!operator || !map[operator]) throw new Error("unsupported assignment operator " + String(operator));
+				this.compileIdentifier(name);
+				this.compileExpression(requiredChild(expr, "right"));
+				this.emit(map[operator]);
+			}
+			this.emit("DUP");
+			this.emit("STORE_LOCAL", slot);
+			return;
 		}
-		this.emit("DUP");
-		this.emit("STORE_LOCAL", slot);
-		return;
-	}
-	if (expr.left.type === "MemberExpression" && expr.operator === "=") {
-		this.compileExpression(expr.left.object);
-		this.compilePropertyKey(expr.left);
-		this.compileExpression(expr.right);
-		this.emit("SET_PROP");
-		return;
-	}
-	throw new Error("unsupported assignment expression");
-};
-Compiler.prototype.compilePropertyKey = function(expr) {
-	if (expr.computed) this.compileExpression(expr.property);
-	else this.emit("PUSH_CONST", this.addConstant("string", expr.property.name));
-};
-Compiler.prototype.compileMember = function(expr) {
-	this.compileExpression(expr.object);
-	this.compilePropertyKey(expr);
-	this.emit("GET_PROP");
-};
-Compiler.prototype.compileCall = function(expr) {
-	if (expr.callee.type === "MemberExpression") {
-		this.compileExpression(expr.callee.object);
-		this.compilePropertyKey(expr.callee);
-		for (let i = 0; i < expr.arguments.length; i += 1) this.compileExpression(expr.arguments[i]);
-		this.emit("CALL_METHOD", expr.arguments.length);
-		return;
-	}
-	this.compileExpression(expr.callee);
-	for (let j = 0; j < expr.arguments.length; j += 1) this.compileExpression(expr.arguments[j]);
-	this.emit("CALL_EXT", 0, expr.arguments.length);
-};
-Compiler.prototype.compileConditional = function(expr) {
-	const alternate = this.label();
-	const end = this.label();
-	this.compileExpression(expr.test);
-	this.emit("JMP_FALSE", alternate);
-	this.compileExpression(expr.consequent);
-	this.emit("JMP", end);
-	this.mark(alternate);
-	this.compileExpression(expr.alternate);
-	this.mark(end);
-};
-Compiler.prototype.instructionSize = function(instr, positions) {
-	if (instr.label) return 0;
-	const start = positions.get(instr) || 0;
-	let size = 1;
-	for (let i = 0; i < instr.args.length; i += 1) {
-		const arg = instr.args[i];
-		if (typeof arg === "string") size += signedLengthFor(positions.get(arg) || 0, start, size);
-		else size += encodeUnsigned(arg).length;
-	}
-	return size;
-};
-Compiler.prototype.isInstruction = function(instr, op) {
-	return instr && !instr.label && instr.op === op;
-};
-Compiler.prototype.fuseSuperinstructions = function() {
-	const out = [];
-	for (let i = 0; i < this.instructions.length; i += 1) {
-		const one = this.instructions[i];
-		const two = this.instructions[i + 1];
-		const three = this.instructions[i + 2];
-		if (this.isInstruction(one, "PUSH_CONST") && this.isInstruction(two, "GET_PROP")) {
-			out.push({
-				op: "GET_CONST_PROP",
-				args: [one.args[0]]
-			});
-			i += 1;
-			continue;
+		if (left.type === "MemberExpression" && operator === "=") {
+			this.compileExpression(requiredChild(left, "object"));
+			this.compilePropertyKey(left);
+			this.compileExpression(requiredChild(expr, "right"));
+			this.emit("SET_PROP");
+			return;
 		}
-		if (this.isInstruction(one, "DUP") && this.isInstruction(two, "STORE_LOCAL") && this.isInstruction(three, "POP")) {
-			out.push({
-				op: "STORE_LOCAL_POP",
-				args: [two.args[0]]
-			});
-			i += 2;
-			continue;
-		}
-		out.push(one);
+		throw new Error("unsupported assignment expression");
 	}
-	this.instructions = out;
-};
-Compiler.prototype.assemble = function() {
-	const positions = /* @__PURE__ */ new Map();
-	let stable = false;
-	while (!stable) {
-		stable = true;
-		let cursor = 0;
+	compilePropertyKey(expr) {
+		if (nodeFlag(expr, "computed")) this.compileExpression(requiredChild(expr, "property"));
+		else this.emit("PUSH_CONST", this.addConstant("string", nodeName$1(requiredChild(expr, "property")) || ""));
+	}
+	compileMember(expr) {
+		this.compileExpression(requiredChild(expr, "object"));
+		this.compilePropertyKey(expr);
+		this.emit("GET_PROP");
+	}
+	compileCall(expr) {
+		const callee = requiredChild(expr, "callee");
+		const args = nodeArguments(expr);
+		if (callee.type === "MemberExpression") {
+			this.compileExpression(requiredChild(callee, "object"));
+			this.compilePropertyKey(callee);
+			for (let i = 0; i < args.length; i += 1) this.compileExpression(args[i]);
+			this.emit("CALL_METHOD", args.length);
+			return;
+		}
+		this.compileExpression(callee);
+		for (let j = 0; j < args.length; j += 1) this.compileExpression(args[j]);
+		this.emit("CALL_EXT", 0, args.length);
+	}
+	compileConditional(expr) {
+		const alternate = this.label();
+		const end = this.label();
+		this.compileExpression(requiredChild(expr, "test"));
+		this.emit("JMP_FALSE", alternate);
+		this.compileExpression(requiredChild(expr, "consequent"));
+		this.emit("JMP", end);
+		this.mark(alternate);
+		this.compileExpression(requiredChild(expr, "alternate"));
+		this.mark(end);
+	}
+	instructionSize(instr, positions) {
+		if (instr.label) return 0;
+		const start = positions.get(instr) || 0;
+		let size = 1;
+		for (let i = 0; i < instr.args.length; i += 1) {
+			const arg = instr.args[i];
+			if (typeof arg === "string") size += signedLengthFor(positions.get(arg) || 0, start, size);
+			else size += encodeUnsigned(arg).length;
+		}
+		return size;
+	}
+	isInstruction(instr, op) {
+		return Boolean(instr && !instr.label && instr.op === op);
+	}
+	fuseSuperinstructions() {
+		const out = [];
 		for (let i = 0; i < this.instructions.length; i += 1) {
-			const instr = this.instructions[i];
-			if (instr.label) {
-				if (positions.get(instr.label) !== cursor) stable = false;
-				positions.set(instr.label, cursor);
-			} else {
-				positions.set(instr, cursor);
-				cursor += this.instructionSize(instr, positions);
+			const one = this.instructions[i];
+			const two = this.instructions[i + 1];
+			const three = this.instructions[i + 2];
+			if (this.isInstruction(one, "PUSH_CONST") && this.isInstruction(two, "GET_PROP")) {
+				out.push({
+					op: "GET_CONST_PROP",
+					args: [one.args[0]]
+				});
+				i += 1;
+				continue;
+			}
+			if (this.isInstruction(one, "DUP") && this.isInstruction(two, "STORE_LOCAL") && this.isInstruction(three, "POP")) {
+				out.push({
+					op: "STORE_LOCAL_POP",
+					args: [two.args[0]]
+				});
+				i += 2;
+				continue;
+			}
+			out.push(one);
+		}
+		this.instructions = out;
+	}
+	assemble() {
+		const positions = /* @__PURE__ */ new Map();
+		let stable = false;
+		while (!stable) {
+			stable = true;
+			let cursor = 0;
+			for (let i = 0; i < this.instructions.length; i += 1) {
+				const instr = this.instructions[i];
+				if (instr.label) {
+					if (positions.get(instr.label) !== cursor) stable = false;
+					positions.set(instr.label, cursor);
+				} else {
+					positions.set(instr, cursor);
+					cursor += this.instructionSize(instr, positions);
+				}
 			}
 		}
-	}
-	const tokens = [];
-	for (let j = 0; j < this.instructions.length; j += 1) {
-		const op = this.instructions[j];
-		if (op.label) continue;
-		const start = tokens.length;
-		tokens.push(this.dialect.opcodes[op.op]);
-		for (let k = 0; k < op.args.length; k += 1) {
-			const arg = op.args[k];
-			if (typeof arg === "string") {
-				const before = tokens.length - start;
-				const len = signedLengthFor(positions.get(arg), start, before);
-				encodeSigned(positions.get(arg) - (start + before + len)).forEach(function(value) {
+		const tokens = [];
+		for (let j = 0; j < this.instructions.length; j += 1) {
+			const op = this.instructions[j];
+			if (op.label) continue;
+			assert.ok(op.op);
+			const start = tokens.length;
+			tokens.push(this.dialect.opcodes[op.op]);
+			for (let k = 0; k < op.args.length; k += 1) {
+				const arg = op.args[k];
+				if (typeof arg === "string") {
+					const before = tokens.length - start;
+					const target = positions.get(arg) || 0;
+					const len = signedLengthFor(target, start, before);
+					encodeSigned(target - (start + before + len)).forEach(function(value) {
+						tokens.push(value);
+					});
+				} else encodeUnsigned(arg).forEach(function(value) {
 					tokens.push(value);
 				});
-			} else encodeUnsigned(arg).forEach(function(value) {
-				tokens.push(value);
-			});
+			}
 		}
+		return tokens;
 	}
-	return tokens;
-};
-Compiler.prototype.constantExpression = function(constant) {
-	const next = this.dialect.next;
-	if (constant.kind === "number") {
-		if (Number.isNaN(constant.value)) return binary("/", literal(0), literal(0));
-		if (constant.value === Infinity) return binary("/", literal(1), literal(0));
-		if (constant.value === -Infinity) return {
+	constantExpression(constant) {
+		const next = this.dialect.next;
+		if (constant.kind === "number") {
+			const value = Number(constant.value);
+			if (Number.isNaN(value)) return binary("/", literal(0), literal(0));
+			if (value === Infinity) return binary("/", literal(1), literal(0));
+			if (value === -Infinity) return {
+				type: "UnaryExpression",
+				operator: "-",
+				prefix: true,
+				argument: binary("/", literal(1), literal(0))
+			};
+			return literal(value);
+		}
+		if (constant.kind === "string" || constant.kind === "reference") {
+			const value = String(constant.value);
+			const salt = next() & 65535 || 1;
+			const decoded = call(identifier("toildefender$numericVmString"), [
+				bigintExpression(stringBlob(value, salt), next),
+				literal(value.length),
+				literal(salt)
+			]);
+			if (constant.kind === "reference") return {
+				type: "ConditionalExpression",
+				test: binary("===", unary("typeof", identifier(value)), literal("undefined")),
+				consequent: member(identifier("globalThis"), decoded),
+				alternate: identifier(value)
+			};
+			return decoded;
+		}
+		if (constant.kind === "boolean") return literal(Boolean(constant.value));
+		if (constant.kind === "undefined") return {
 			type: "UnaryExpression",
-			operator: "-",
+			operator: "void",
 			prefix: true,
-			argument: binary("/", literal(1), literal(0))
+			argument: literal(0)
 		};
-		return literal(constant.value);
+		throw new Error("unsupported constant " + constant.kind);
 	}
-	if (constant.kind === "string" || constant.kind === "reference") {
-		const value = String(constant.value);
+	referenceExpression(value) {
+		const next = this.dialect.next;
+		const name = String(value);
 		const salt = next() & 65535 || 1;
 		const decoded = call(identifier("toildefender$numericVmString"), [
-			bigintExpression(stringBlob(value, salt), next),
-			literal(value.length),
+			bigintExpression(stringBlob(name, salt), next),
+			literal(name.length),
 			literal(salt)
 		]);
-		if (constant.kind === "reference") return {
+		return {
 			type: "ConditionalExpression",
-			test: binary("===", unary("typeof", identifier(value)), literal("undefined")),
+			test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
 			consequent: member(identifier("globalThis"), decoded),
-			alternate: identifier(value)
+			alternate: identifier(name)
 		};
-		return decoded;
 	}
-	if (constant.kind === "boolean") return literal(!!constant.value);
-	if (constant.kind === "undefined") return {
-		type: "UnaryExpression",
-		operator: "void",
-		prefix: true,
-		argument: literal(0)
-	};
-	throw new Error("unsupported constant " + constant.kind);
-};
-Compiler.prototype.referenceExpression = function(value) {
-	const next = this.dialect.next;
-	const name = String(value);
-	const salt = next() & 65535 || 1;
-	const decoded = call(identifier("toildefender$numericVmString"), [
-		bigintExpression(stringBlob(name, salt), next),
-		literal(name.length),
-		literal(salt)
-	]);
-	return {
-		type: "ConditionalExpression",
-		test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
-		consequent: member(identifier("globalThis"), decoded),
-		alternate: identifier(name)
-	};
-};
-Compiler.prototype.constantCellExpression = function(constant) {
-	if (constant.kind === "reference") return arrayExpression([literal(3), literal(this.addReference(constant.value))]);
-	if (constant.kind !== "string" && constant.kind !== "reference") return this.constantExpression(constant);
-	return arrayExpression([literal(constant.kind === "reference" ? 2 : 0), Object.assign(functionExpression([returnStatement(this.constantExpression(constant))]), { toildefender$numericVmInternal: true })]);
-};
-Compiler.prototype.finish = function() {
-	this.fuseSuperinstructions();
-	const tokens = this.assemble();
-	const encrypted = encryptedStream(tokens, this.dialect.base, this.dialect.seed);
-	const opValues = OP_NAMES.map((name) => this.dialect.opcodes[name]);
-	const record = {
-		base: this.dialect.base,
-		blob: packTokens(encrypted.encrypted, this.dialect.base),
-		constants: this.constants.map(this.constantCellExpression.bind(this)),
-		opValues: opValues.map(literal),
-		references: this.references.map(this.referenceExpression.bind(this)),
-		seed: this.dialect.seed,
-		tag: encrypted.tag,
-		tokenCount: tokens.length
-	};
-	if (this.options.hashMesh && this.options.hashMesh.enabled) buildHashMeshRecord(record, encrypted.encrypted, opValues, this.constants, this.dialect, Object.assign({}, this.options.hashMesh, { seed: this.options.seed }));
-	return record;
+	constantCellExpression(constant) {
+		if (constant.kind === "reference") return arrayExpression([literal(3), literal(this.addReference(constant.value))]);
+		if (constant.kind !== "string" && constant.kind !== "reference") return this.constantExpression(constant);
+		const lazy = functionExpression([returnStatement(this.constantExpression(constant))]);
+		setNodeField(lazy, "toildefender$numericVmInternal", true);
+		return arrayExpression([literal(constant.kind === "reference" ? 2 : 0), lazy]);
+	}
+	finish() {
+		this.fuseSuperinstructions();
+		const tokens = this.assemble();
+		const encrypted = encryptedStream(tokens, this.dialect.base, this.dialect.seed);
+		const opValues = OP_NAMES.map((name) => this.dialect.opcodes[name]);
+		const record = {
+			base: this.dialect.base,
+			blob: packTokens(encrypted.encrypted, this.dialect.base),
+			constants: this.constants.map(this.constantCellExpression.bind(this)),
+			opValues: opValues.map(literal),
+			references: this.references.map(this.referenceExpression.bind(this)),
+			seed: this.dialect.seed,
+			tag: encrypted.tag,
+			tokenCount: tokens.length
+		};
+		if (this.options.hashMesh.enabled) buildHashMeshRecord(record, encrypted.encrypted, opValues, this.constants, this.dialect, Object.assign({}, this.options.hashMesh, { seed: this.options.seed }));
+		return record;
+	}
 };
 function makeDialect(seedText) {
 	const seed = hashSeed(seedText);
@@ -5931,7 +6455,7 @@ function makeDialect(seedText) {
 	const values = shuffle(Array.from({ length: OP_NAMES.length }, function(_, index) {
 		return index + 1;
 	}), next);
-	const opcodes = {};
+	const opcodes = Object.create(null);
 	OP_NAMES.forEach(function(name, index) {
 		opcodes[name] = values[index];
 	});
@@ -5942,8 +6466,7 @@ function makeDialect(seedText) {
 		seed
 	};
 }
-function vmCall(record, next, refs) {
-	refs = refs || {};
+function vmCall(record, next, refs = {}) {
 	return call(identifier("toildefender$numericVmRun"), [
 		bigintExpression(record.blob, next),
 		literal(record.base),
@@ -5959,27 +6482,33 @@ function vmCall(record, next, refs) {
 		refs.cache || arrayExpression([])
 	]);
 }
+function objectOptions(value) {
+	return typeof value == "object" && value !== null ? value : {};
+}
 function resolveOptions(options) {
-	return Object.assign({
-		enabled: false,
-		maxFunctionSize: 120,
-		maxFunctions: Infinity,
-		minFunctionSize: 1,
-		mode: "balanced",
-		ratio: 1,
-		seed: "toildefender-numeric-vm",
+	const input = objectOptions(options);
+	const hashMeshInput = objectOptions(input.hashMesh);
+	return {
+		enabled: input.enabled === true,
+		excludeNames: Array.isArray(input.excludeNames) ? input.excludeNames.map(String) : [],
+		maxFunctionSize: typeof input.maxFunctionSize == "number" ? input.maxFunctionSize : 120,
+		maxFunctions: normalizeMaxFunctions(input.maxFunctions ?? Infinity),
+		minFunctionSize: typeof input.minFunctionSize == "number" ? input.minFunctionSize : 1,
+		mode: typeof input.mode == "string" ? input.mode : "balanced",
+		ratio: normalizeRatio(input.ratio ?? 1),
+		seed: typeof input.seed == "string" ? input.seed : "toildefender-numeric-vm",
 		hashMesh: {
-			bindToVmState: true,
-			chaffRatio: .55,
-			deriveDialectFromMesh: false,
-			enabled: false,
-			encodeChaff: true,
-			mode: "balanced",
-			serverBound: false,
-			unlock: "per-function"
+			bindToVmState: hashMeshInput.bindToVmState !== false,
+			chaffRatio: typeof hashMeshInput.chaffRatio == "number" ? hashMeshInput.chaffRatio : .55,
+			deriveDialectFromMesh: hashMeshInput.deriveDialectFromMesh === true,
+			enabled: hashMeshInput.enabled === true,
+			encodeChaff: hashMeshInput.encodeChaff !== false,
+			mode: typeof hashMeshInput.mode == "string" ? hashMeshInput.mode : "balanced",
+			serverBound: hashMeshInput.serverBound === true,
+			unlock: typeof hashMeshInput.unlock == "string" ? hashMeshInput.unlock : "per-function"
 		},
-		virtualize: "marked"
-	}, options || {});
+		virtualize: typeof input.virtualize == "string" ? input.virtualize : "marked"
+	};
 }
 var NumericVm = class {
 	logger;
@@ -5988,15 +6517,17 @@ var NumericVm = class {
 	constructor(logger, options) {
 		this.logger = logger;
 		this.options = resolveOptions(options);
-		this.options.ratio = normalizeRatio(this.options.ratio);
-		this.options.maxFunctions = normalizeMaxFunctions(this.options.maxFunctions);
 		this.count = 0;
 	}
 	shouldTry(node) {
-		if (!this.options.enabled || !estest_default.isFunction(node) || node.generator || node.async) return false;
-		if (!node.body || node.body.type !== "BlockStatement") return false;
-		if (functionName(node).indexOf("toildefender$numericVm") === 0) return false;
-		const bodySize = node.body.body.length;
+		if (!this.options.enabled || !estest_default.isFunction(node) || nodeFlag(node, "generator") || nodeFlag(node, "async")) return false;
+		const body = childNode(node, "body");
+		if (!body || body.type !== "BlockStatement") return false;
+		if (nodeFlag(node, "toildefender$noNumericVm")) return false;
+		const name = functionName(node);
+		if (name.indexOf("toildefender$numericVm") === 0) return false;
+		if (this.options.excludeNames.indexOf(name) >= 0) return false;
+		const bodySize = bodyArray(body).length;
 		if (bodySize < this.options.minFunctionSize || bodySize > this.options.maxFunctionSize) return false;
 		if (this.options.virtualize === "all-supported") return true;
 		if (this.options.virtualize === "heuristic") return bodySize >= this.options.minFunctionSize;
@@ -6006,37 +6537,35 @@ var NumericVm = class {
 		assert.ok(estest_default.isNode(ast));
 		if (!this.options.enabled) return ast;
 		const runtime = markNumericVmInternal(replaceStaticBigIntCalls(esprima.parseScript(RUNTIME)));
-		const self = this;
 		let transformed = 0;
 		let candidateIndex = 0;
 		const dataDeclarations = [];
 		const trace = typeof process !== "undefined" && process.env && process.env.TOILDEFENDER_NUMERIC_VM_TRACE === "1";
-		ast = traverser_default.traverse(ast, [], function(node) {
-			if (!self.shouldTry(node)) return node;
+		ast = traverser_default.traverse(ast, [], (node) => {
+			if (!this.shouldTry(node)) return node;
 			const currentIndex = candidateIndex;
 			candidateIndex += 1;
-			if (transformed >= self.options.maxFunctions) return node;
-			if (self.options.ratio <= 0 || selectionScore(self.options, node, currentIndex) >= self.options.ratio) return node;
+			if (transformed >= this.options.maxFunctions) return node;
+			if (this.options.ratio <= 0 || selectionScore(this.options, node, currentIndex) >= this.options.ratio) return node;
 			try {
-				const originalBodySize = node.body && node.body.body ? node.body.body.length : 0;
-				const dialect = makeDialect(self.options.seed + ":" + transformed + ":" + functionName(node));
-				const record = new Compiler(node, dialect, self.options).compile();
-				const dataName = "toildefender$numericVmData$" + transformed;
-				const opsName = "toildefender$numericVmOps$" + transformed;
-				const meshName = "toildefender$numericVmMesh$" + transformed;
-				const cacheName = "toildefender$numericVmCache$" + transformed;
-				let declarations;
-				declarations = [
+				const body = childNode(node, "body");
+				const originalBodySize = body ? bodyArray(body).length : 0;
+				const dialect = makeDialect(`${this.options.seed}:${transformed}:${functionName(node)}`);
+				const record = new Compiler(node, dialect, this.options).compile();
+				const dataName = `toildefender$numericVmData$${transformed}`;
+				const opsName = `toildefender$numericVmOps$${transformed}`;
+				const meshName = `toildefender$numericVmMesh$${transformed}`;
+				const cacheName = `toildefender$numericVmCache$${transformed}`;
+				[
 					variableDeclaration(dataName, arrayExpression(record.constants)),
 					variableDeclaration(opsName, arrayExpression(record.opValues)),
 					variableDeclaration(meshName, record.mesh ? meshExpression(record.mesh) : literal(null)),
 					variableDeclaration(cacheName, arrayExpression([]))
-				];
-				declarations.forEach(function(declaration) {
-					declaration.toildefender$numericVmInternal = true;
+				].forEach(function(declaration) {
+					setNodeField(declaration, "toildefender$numericVmInternal", true);
 					dataDeclarations.push(declaration);
 				});
-				node.body = {
+				setNodeField(node, "body", {
 					type: "BlockStatement",
 					body: [returnStatement(vmCall(record, dialect.next, {
 						cache: identifier(cacheName),
@@ -6044,7 +6573,7 @@ var NumericVm = class {
 						mesh: identifier(meshName),
 						ops: identifier(opsName)
 					}))]
-				};
+				});
 				transformed += 1;
 				if (trace) console.error(JSON.stringify({
 					event: "numeric_vm_transformed",
@@ -6055,17 +6584,21 @@ var NumericVm = class {
 				}));
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
-				if (self.options.virtualize === "all-supported") self.logger.warn("numeric_vm skipped " + functionName(node) + ": " + message);
+				if (this.options.virtualize === "all-supported") this.logger.warn("numeric_vm skipped " + functionName(node) + ": " + message);
 			}
 			return node;
 		});
-		if (transformed > 0) ast.body = runtime.body.concat(dataDeclarations).concat(ast.body);
+		if (transformed > 0) setNodeField(ast, "body", bodyArray(runtime).concat(dataDeclarations).concat(bodyArray(ast)));
 		this.count = transformed;
 		return ast;
 	}
 };
 //#endregion
 //#region src/processors/health.ts
+function bodyStatements(node) {
+	const body = node.body;
+	return Array.isArray(body) ? body : [];
+}
 var Health = class {
 	logger;
 	strict;
@@ -6083,11 +6616,11 @@ var Health = class {
 	* @returns {Node} Root node
 	*/
 	check(ast) {
-		const visited = [];
+		const visited = /* @__PURE__ */ new Set();
 		traverser_default.traverse(ast, [], (node, stack) => {
-			if (_.includes(visited, node)) this.throwError("Node has multiple parents: " + JSON.stringify(node));
-			else visited.push(node);
-			if (node.type == "BlockStatement") node.body.forEach((stmt) => {
+			if (visited.has(node)) this.throwError("Node has multiple parents: " + JSON.stringify(node));
+			else visited.add(node);
+			if (node.type == "BlockStatement") bodyStatements(node).forEach((stmt) => {
 				if (!estest_default.isStatement(stmt)) this.throwError(JSON.stringify(stack[1], null, 2));
 			});
 			return node;
@@ -6097,6 +6630,7 @@ var Health = class {
 };
 //#endregion
 //#region src/obfuscator.ts
+var NO_NUMERIC_VM_DIRECTIVE = "toildefender:no-numeric-vm";
 function requireBase() {
 	if (typeof import.meta.url == "string" && import.meta.url.length > 0) return import.meta.url;
 	if (typeof __filename == "string" && path.isAbsolute(__filename)) return __filename;
@@ -6106,7 +6640,7 @@ var optionalRequire = createRequire(requireBase());
 function requireOptional(name) {
 	try {
 		return optionalRequire(name);
-	} catch (e) {
+	} catch {
 		return null;
 	}
 }
@@ -6190,13 +6724,74 @@ var featureDeps = {
 	mangle: [],
 	compress: ["mangle"]
 };
+function isRecord(value) {
+	return typeof value == "object" && value !== null;
+}
+function asAstNode(value) {
+	return value;
+}
+function asAstNodeArray(value) {
+	return Array.isArray(value) ? value : [];
+}
+function asStringArray(value) {
+	return Array.isArray(value) ? value.filter((item) => typeof item == "string") : [];
+}
+function nodeName(node) {
+	const name = node.name;
+	return typeof name == "string" ? name : "";
+}
+function nodeBody(node) {
+	const body = node.body;
+	return isRecord(body) && typeof body.type == "string" ? body : {
+		type: "BlockStatement",
+		body: []
+	};
+}
+function nodeBodyArray(node) {
+	const body = node.body;
+	return asAstNodeArray(body);
+}
+function nodeParams(node) {
+	const params = node.params;
+	return asAstNodeArray(params);
+}
+function methodIdName(method) {
+	const id = method.id;
+	if (isRecord(id) && typeof id.name == "string") return id.name;
+	return null;
+}
+function methodFlag(method, key) {
+	return method[key] === true;
+}
 function isNumericVmInternalNode(node) {
-	return node && node.toildefender$numericVmInternal === true;
+	return isRecord(node) && node.toildefender$numericVmInternal === true;
+}
+function expressionStringValue(node) {
+	if (!isRecord(node)) return null;
+	if (typeof node.value == "string") return node.value;
+	const expression = node.expression;
+	if (isRecord(expression) && typeof expression.value == "string") return expression.value;
+	return null;
+}
+function hasNoNumericVmDirective(node) {
+	const bodyNode = nodeBody(node);
+	if (bodyNode.type != "BlockStatement") return false;
+	for (const statement of nodeBodyArray(bodyNode)) {
+		if (statement.type != "ExpressionStatement") return false;
+		if (statement.directive === NO_NUMERIC_VM_DIRECTIVE || expressionStringValue(statement) === NO_NUMERIC_VM_DIRECTIVE) return true;
+	}
+	return false;
+}
+function markNoNumericVmDirectives(ast) {
+	return traverser_default.traverse(ast, [], (node) => {
+		if ((node.type == "FunctionDeclaration" || node.type == "FunctionExpression" || node.type == "ArrowFunctionExpression") && hasNoNumericVmDirective(node)) node.toildefender$noNumericVm = true;
+		return node;
+	});
 }
 function takeNumericVmInternalStatements(ast) {
-	if (!ast || ast.type != "Program") return [];
+	if (ast.type != "Program") return [];
 	const retained = [];
-	ast.body = ast.body.filter((statement) => {
+	ast.body = nodeBodyArray(ast).filter((statement) => {
 		if (isNumericVmInternalNode(statement)) {
 			retained.push(statement);
 			return false;
@@ -6257,7 +6852,6 @@ var features = Object.fromEntries(Object.keys(defaultOptions.features).map((feat
 * });
 */
 function protect(inputOptions) {
-	let options = inputOptions;
 	/**
 	* Annotates potentially thrown errors with a label
 	*/
@@ -6266,7 +6860,7 @@ function protect(inputOptions) {
 			return task();
 		} catch (e) {
 			const error = e instanceof Error ? e : new Error(String(e));
-			throw new Error(`[${label}]\t${error.stack || error.message}`);
+			throw new Error(`[${label}]\t${error.stack || error.message}`, { cause: e });
 		}
 	}
 	/**
@@ -6286,13 +6880,33 @@ function protect(inputOptions) {
 			if (level == logLevel) break;
 		}
 		return (level, data) => {
-			if (_.includes(allowedLevels, level)) {
+			if (allowedLevels.includes(level)) {
 				const prefix = "[task]" + Array(taskIndent).join("	");
 				console.log(`${prefix}[${level}]\t${data.join("	")}`);
 			}
 		};
 	}
-	var taskIndent = 1;
+	const options = _.merge({}, defaultOptions, inputOptions);
+	if (options.protections.virtualMachine.enabled) {
+		options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, { enabled: true });
+		options.features.numeric_vm = true;
+	}
+	if (options.protections.hashMesh.enabled) {
+		options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
+			enabled: true,
+			hashMesh: options.protections.hashMesh
+		});
+		options.features.numeric_vm = true;
+	}
+	if (!options.logAdapter) options.logAdapter = createConsoleLoggingAdapter(options.logLevel);
+	if (!options.forceFeatures) _.map(featureDeps, (deps, feature) => {
+		if (options.features[feature]) deps.forEach((dep) => {
+			options.features[dep] = true;
+		});
+	});
+	else options.features = options.forceFeatures;
+	const logger = new Logger(options.logAdapter);
+	let taskIndent = 1;
 	/**
 	* Wraps a task, indents its output and measures its duration
 	*/
@@ -6307,9 +6921,9 @@ function protect(inputOptions) {
 					task();
 					const duration = Date.now() - start;
 					logger.info(`${prefix}${label}: ${duration}ms`);
-					return { otherwise: function() {} };
-				} else return { otherwise: function(task) {
-					task();
+					return { otherwise: () => void 0 };
+				} else return { otherwise: (task) => {
+					task?.();
 				} };
 			} finally {
 				taskIndent--;
@@ -6323,15 +6937,14 @@ function protect(inputOptions) {
 			try {
 				presetEnvPath = optionalRequire.resolve("@babel/preset-env");
 			} catch (e) {
-				throw new Error("Babel transform requested, but @babel/preset-env is not installed");
+				throw new Error("Babel transform requested, but @babel/preset-env is not installed", { cause: e });
 			}
-			let presetOptions;
-			presetOptions = {
+			const presetOptions = {
 				modules: "commonjs",
 				targets: options.babelTarget,
 				useBuiltIns: false
 			};
-			if (options.babelPreserveAsync !== false) presetOptions.exclude = ["@babel/plugin-transform-async-to-generator", "@babel/plugin-transform-regenerator"];
+			if (options.babelPreserveAsync) presetOptions.exclude = ["@babel/plugin-transform-async-to-generator", "@babel/plugin-transform-regenerator"];
 			const result = modernBabel.transformSync(code, {
 				babelrc: false,
 				comments: false,
@@ -6362,7 +6975,7 @@ function protect(inputOptions) {
 			"babel-plugin-transform-es2015-template-literals",
 			"babel-plugin-transform-es2015-unicode-regex"
 		].map((plugin) => optionalRequire.resolve(plugin)) };
-		return legacyBabel.transform(code, babelOptions).code;
+		return legacyBabel.transform(code, babelOptions).code || code;
 	}
 	function parseSource(code, options) {
 		try {
@@ -6392,9 +7005,9 @@ function protect(inputOptions) {
 		return false;
 	}
 	function dispatcherForMethod(method) {
-		if (method.async === true && method.generator === true) return "main$asyncGenerator";
-		if (method.async === true) return "main$async";
-		if (method.generator === true) return "main$generator";
+		if (methodFlag(method, "async") && methodFlag(method, "generator")) return "main$asyncGenerator";
+		if (methodFlag(method, "async")) return "main$async";
+		if (methodFlag(method, "generator")) return "main$generator";
 		return "main";
 	}
 	function normalizeRatio(value) {
@@ -6413,29 +7026,12 @@ function protect(inputOptions) {
 		return h >>> 0;
 	}
 	function methodControlFlowScore(method, index) {
-		const name = method && method.id && method.id.name || "";
-		return hashString32(`${options.controlFlow && options.controlFlow.seed || ""}:${index}:${name}`) / 4294967296;
+		const name = methodIdName(method) || "";
+		return hashString32(`${options.controlFlow.seed || ""}:${index}:${name}`) / 4294967296;
 	}
-	options = _.merge({}, defaultOptions, options);
-	if (options.protections.virtualMachine.enabled) {
-		options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, { enabled: true });
-		options.features.numeric_vm = true;
-	}
-	if (options.protections.hashMesh.enabled) {
-		options.numericVm = _.merge({}, options.numericVm, options.protections.virtualMachine, {
-			enabled: true,
-			hashMesh: options.protections.hashMesh
-		});
-		options.features.numeric_vm = true;
-	}
-	if (!options.logAdapter) options.logAdapter = createConsoleLoggingAdapter(options.logLevel);
-	if (!options.forceFeatures) _.map(featureDeps, (deps, feature) => {
-		if (options.features[feature]) deps.forEach((dep) => options.features[dep] = true);
-	});
-	else options.features = options.forceFeatures;
-	const controlFlowRatio = normalizeRatio(options.controlFlow && options.controlFlow.ratio);
-	const controlFlowActive = options.features.control_flow && controlFlowRatio > 0;
-	const scopeRatio = normalizeRatio(options.scope && options.scope.ratio);
+	const controlFlowRatio = normalizeRatio(options.controlFlow.ratio);
+	const controlFlowActive = options.features.control_flow === true && controlFlowRatio > 0;
+	const scopeRatio = normalizeRatio(options.scope.ratio);
 	const parseOptions = {};
 	const scopeOptions = { optimistic: true };
 	const lexicalScopeOptions = {
@@ -6443,16 +7039,19 @@ function protect(inputOptions) {
 		optimistic: true,
 		sourceType: "script"
 	};
-	var logger = new Logger(options.logAdapter);
 	let customBindAdded = false;
 	const start = Date.now();
 	doTask("preprocessing", true, () => {
 		const preprocessor = new Preprocessing(logger);
-		options.modulesCode = _.mapValues(options.modulesCode, (code, key) => tryTag(key, () => preprocessor.process(code, options.preprocessorVariables)));
+		const modulesCode = {};
+		for (const [key, code] of Object.entries(options.modulesCode)) modulesCode[key] = tryTag(key, () => preprocessor.process(code, options.preprocessorVariables));
+		options.modulesCode = modulesCode;
 		options.code = tryTag("app", () => preprocessor.process(options.code, options.preprocessorVariables));
 	});
 	doTask("babel", options.babel, () => {
-		options.modulesCode = _.mapValues(options.modulesCode, (moduleCode, key) => tryTag(key, () => transformModernSyntax(moduleCode, key)));
+		const modulesCode = {};
+		for (const [key, moduleCode] of Object.entries(options.modulesCode)) modulesCode[key] = tryTag(key, () => transformModernSyntax(moduleCode, key));
+		options.modulesCode = modulesCode;
 		options.code = tryTag("app", () => transformModernSyntax(options.code, "app"));
 	});
 	let ast = {
@@ -6467,26 +7066,31 @@ function protect(inputOptions) {
 		}
 	}
 	doTask("parse", true, () => {
-		modulesAST = _.mapValues(options.modulesCode, (code, key) => tryTag(key, () => parseSource(code, parseOptions)));
+		const parsedModules = {};
+		for (const [key, code] of Object.entries(options.modulesCode)) parsedModules[key] = tryTag(key, () => parseSource(code, parseOptions));
+		modulesAST = parsedModules;
 		modulesAST.app = tryTag("app", () => parseSource(options.code, parseOptions));
 	});
 	doTask("merge", true, () => {
-		ast = new Modules(logger).merge(modulesAST, "app", null);
+		ast = asAstNode(new Modules(logger).merge(modulesAST, "app", null));
 	});
 	doTask("dead_code", options.features.dead_code, () => {
-		ast = new DeadCode(logger).insert(ast, 1);
+		ast = asAstNode(new DeadCode(logger).insert(ast, 1));
 	});
-	doTask("simplify", options.simplify !== false, () => {
-		ast = new Normalizer(logger).simplify(ast);
+	doTask("numeric_vm_markers", true, () => {
+		ast = asAstNode(markNoNumericVmDirectives(ast));
+	});
+	doTask("simplify", options.simplify, () => {
+		ast = asAstNode(new Normalizer(logger).simplify(ast));
 	});
 	doTask("numeric_vm", options.features.numeric_vm || options.numericVm.enabled, () => {
-		ast = new NumericVm(logger, _.merge({}, options.numericVm, { enabled: options.features.numeric_vm || options.numericVm.enabled })).apply(ast);
+		ast = asAstNode(new NumericVm(logger, _.merge({}, options.numericVm, { enabled: options.features.numeric_vm || options.numericVm.enabled })).apply(ast));
 	});
 	doTask("identifiers", options.features.identifiers, () => {
 		const identifiers = new Identifiers(logger);
-		ast = identifiers.computeProperties(ast);
-		ast = identifiers.arrayizeObjects(ast, { objectPacking: options.features.object_packing !== false });
-		ast = identifiers.moveLiterals(ast, escope.analyze(ast, scopeOptions));
+		ast = asAstNode(identifiers.computeProperties(ast));
+		ast = asAstNode(identifiers.arrayizeObjects(ast, { objectPacking: options.features.object_packing !== false }));
+		ast = asAstNode(identifiers.moveLiterals(ast, escope.analyze(ast, scopeOptions)));
 	});
 	doTask("literals", options.features.literals, () => {
 		new Literals(logger).generateStrings(ast);
@@ -6505,37 +7109,41 @@ function protect(inputOptions) {
 		doTask("create_scope_objects", true, () => {
 			scopes.createScopeObjects(ast, escope.analyze(ast, lexicalScopeOptions), {
 				ratio: scopeRatio,
-				seed: options.scope && options.scope.seed || "toildefender-scope",
+				seed: options.scope.seed || "toildefender-scope",
 				forceProgram: controlFlowActive
 			});
 		});
 		const methodEntryPoints = {};
+		const entryPointFor = (method) => {
+			const name = methodIdName(method);
+			return name ? methodEntryPoints[name] : void 0;
+		};
 		doTask("list_methods", true, () => {
-			methods.listMethods(ast).forEach((methodName) => {
-				methodEntryPoints[methodName] = { entry: rng.get() };
-			});
+			for (const methodName of asStringArray(methods.listMethods(ast))) methodEntryPoints[methodName] = { entry: rng.get() };
 		});
-		let fns;
+		let fns = [];
 		doTask("extract_methods", true, () => {
 			const scopeManager = escope.analyze(ast, lexicalScopeOptions);
-			fns = methods.extractMethods(ast);
+			fns = asAstNodeArray(methods.extractMethods(ast));
 			fns = fns.map((method) => {
-				const refers = methods.methodRefersToArguments(method, scopeManager);
-				methods.removeFirstArguments(method, refers ? method.params.filter((x) => x.name.indexOf("$$scope") == 0).length : 0);
-				return methods.replaceArgumentReferences(method, true);
+				const scopeArgumentCount = methods.methodRefersToArguments(method, scopeManager) ? nodeParams(method).filter((param) => nodeName(param).indexOf("$$scope") == 0).length : 0;
+				methods.removeFirstArguments(method, scopeArgumentCount);
+				return asAstNode(methods.replaceArgumentReferences(method, true));
 			});
 			fns.forEach((method) => {
-				if (method && method.id && methodEntryPoints[method.id.name]) methodEntryPoints[method.id.name].dispatcher = dispatcherForMethod(method);
+				const entryPoint = entryPointFor(method);
+				if (entryPoint) entryPoint.dispatcher = dispatcherForMethod(method);
 			});
 			const selectedMethodEntryPoints = {};
 			fns.forEach((method, index) => {
-				if (!method || !method.id || !methodEntryPoints[method.id.name]) return;
-				if (controlFlowRatio >= 1 || methodControlFlowScore(method, index) < controlFlowRatio) selectedMethodEntryPoints[method.id.name] = methodEntryPoints[method.id.name];
+				const name = methodIdName(method);
+				if (!name || !methodEntryPoints[name]) return;
+				if (controlFlowRatio >= 1 || methodControlFlowScore(method, index) < controlFlowRatio) selectedMethodEntryPoints[name] = methodEntryPoints[name];
 			});
 			if (controlFlowActive) {
 				methods.replaceFunctionCalls(ast, selectedMethodEntryPoints);
 				fns.forEach((method) => {
-					methods.replaceFunctionCalls(method.body, selectedMethodEntryPoints);
+					methods.replaceFunctionCalls(nodeBody(method), selectedMethodEntryPoints);
 				});
 			}
 		});
@@ -6572,42 +7180,44 @@ function protect(inputOptions) {
 			flattener.addMethod(ast, entry, exit);
 			syncFns.forEach((method) => {
 				methods.bumpArgumentsIndices(method, 1);
-				const entry = methodEntryPoints[method.id.name].entry;
-				flattener.addMethod(method.body, entry, exit);
+				const methodEntry = entryPointFor(method);
+				if (!methodEntry) return;
+				flattener.addMethod(nodeBody(method), methodEntry.entry, exit);
 			});
-			let syncAst = flattener.getProgram(entry, exit, {
+			let syncAst = asAstNode(flattener.getProgram(entry, exit, {
 				name: "main",
 				invoke: true
-			});
-			syncAst = flattener.unifyPrefixStatements(syncAst);
+			}));
+			syncAst = asAstNode(flattener.unifyPrefixStatements(syncAst));
 			const asyncPrograms = [];
-			Object.keys(dispatcherGroups).forEach((name) => {
-				const group = dispatcherGroups[name];
-				if (group.fns.length == 0) return;
+			for (const [name, group] of Object.entries(dispatcherGroups)) {
+				if (group.fns.length == 0) continue;
 				const groupFlattener = new Flattener(logger, rng);
-				const groupEntry = methodEntryPoints[group.fns[0].id.name].entry;
+				const firstMethodEntry = entryPointFor(group.fns[0]);
+				if (!firstMethodEntry) continue;
 				const groupExit = rng.get();
 				group.fns.forEach((method) => {
 					methods.bumpArgumentsIndices(method, 1);
-					const entry = methodEntryPoints[method.id.name].entry;
-					groupFlattener.addMethod(method.body, entry, groupExit);
+					const methodEntry = entryPointFor(method);
+					if (!methodEntry) return;
+					groupFlattener.addMethod(nodeBody(method), methodEntry.entry, groupExit);
 				});
-				let groupAst = groupFlattener.getProgram(groupEntry, groupExit, {
+				let groupAst = asAstNode(groupFlattener.getProgram(firstMethodEntry.entry, groupExit, {
 					name,
-					async: group.async === true,
-					generator: group.generator === true,
+					async: Boolean(group.async),
+					generator: Boolean(group.generator),
 					invoke: false
-				});
-				groupAst = groupFlattener.unifyPrefixStatements(groupAst);
+				}));
+				groupAst = asAstNode(groupFlattener.unifyPrefixStatements(groupAst));
 				asyncPrograms.push(groupAst);
-			});
+			}
 			if (asyncPrograms.length > 0) ast = {
 				type: "Program",
-				body: retainedInternalFns.concat(retainedFns).concat(Array.prototype.concat.apply([], asyncPrograms.map((program) => program.body)).concat(syncAst.body))
+				body: retainedInternalFns.concat(retainedFns).concat(asyncPrograms.flatMap((program) => nodeBodyArray(program))).concat(nodeBodyArray(syncAst))
 			};
 			else ast = {
 				type: "Program",
-				body: retainedInternalFns.concat(retainedFns).concat(syncAst.body)
+				body: retainedInternalFns.concat(retainedFns).concat(nodeBodyArray(syncAst))
 			};
 		}).otherwise(() => {
 			const retainedInternalFns = takeNumericVmInternalStatements(ast);
@@ -6618,14 +7228,14 @@ function protect(inputOptions) {
 			};
 		});
 	});
-	doTask("add_runtime_helpers", options.runtimeHelpers !== false && (options.features.scope || options.features.object_packing || options.features.literals || options.babel === false), () => {
+	doTask("add_runtime_helpers", options.runtimeHelpers && (Boolean(options.features.scope || options.features.object_packing || options.features.literals) || !options.babel), () => {
 		addCustomBindOnce();
 	});
 	doTask("postprocessing", true, () => {
-		ast = new Postprocessing(logger).do(ast);
+		ast = asAstNode(new Postprocessing(logger).do(ast));
 	});
 	doTask("health", options.features.health, () => {
-		ast = new Health(logger).check(ast);
+		ast = asAstNode(new Health(logger).check(ast));
 	});
 	doTask("mangle", options.features.mangle, () => {
 		if (hasMangleUnsupportedSyntax(ast)) {
@@ -6634,7 +7244,7 @@ function protect(inputOptions) {
 		}
 		const uglifier = new Uglifier(logger);
 		if (ast.type == "Program") ast.type = "BlockStatement";
-		ast = uglifier.uglify({
+		ast = asAstNode(uglifier.uglify({
 			type: "Program",
 			body: [{
 				type: "CallExpression",
@@ -6645,12 +7255,9 @@ function protect(inputOptions) {
 					body: ast
 				}
 			}]
-		});
+		}));
 	});
-	let codegenOptions = {
-		sourceMap: false,
-		sourceMapWithCode: false
-	};
+	const codegenOptions = { sourceMapWithCode: false };
 	doTask("compress", options.features.compress, () => {
 		codegenOptions.format = {
 			renumber: true,
@@ -6659,12 +7266,9 @@ function protect(inputOptions) {
 			compact: true
 		};
 	});
-	const result = escodegen.generate(ast, codegenOptions);
+	const code = escodegen.generate(ast, codegenOptions);
 	Date.now() - start;
-	return {
-		code: result.code || result,
-		map: result.map && result.map.toString()
-	};
+	return { code };
 }
 var api = {
 	features,
