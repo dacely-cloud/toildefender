@@ -1,0 +1,19 @@
+{
+    "extends": "./tsconfig.base.json",
+    "compilerOptions": {
+        "module": "ESNext",
+        "noEmit": true,
+        "incremental": false
+    },
+    "include": [
+        "src/**/*.ts",
+        "src/**/*.d.ts",
+        "test/**/*.js",
+        "test/**/*.mjs",
+        "vite.config.ts"
+    ],
+    "exclude": [
+        "build",
+        "node_modules"
+    ]
+}

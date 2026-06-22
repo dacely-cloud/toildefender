@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 
 import { firefox } from 'playwright';
 
-const require = createRequire(import.meta.url);
-const toildefender = require('../toildefender.js');
+import toildefender from '../build/toildefender.js';
 
 const SOURCE = `
     (function (root) {

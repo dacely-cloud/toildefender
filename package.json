@@ -1,6 +1,7 @@
 {
     "name": "@dacely/toildefender",
     "version": "0.1.8",
+    "type": "module",
     "description": "Modern JavaScript code protection, bytecode virtualization, and obfuscation for the Toil tech stack.",
     "author": "Dacely",
     "contributors": [
@@ -26,17 +27,37 @@
         "toiljs",
         "dacely"
     ],
-    "main": "toildefender.js",
+    "main": "./build/toildefender.cjs",
+    "module": "./build/toildefender.js",
+    "types": "./build/toildefender.d.ts",
     "exports": {
-        ".": "./toildefender.js"
+        ".": {
+            "types": "./build/toildefender.d.ts",
+            "import": "./build/toildefender.js",
+            "require": "./build/toildefender.cjs",
+            "default": "./build/toildefender.js"
+        },
+        "./cli": {
+            "types": "./build/cli.d.ts",
+            "import": "./build/cli.js",
+            "require": "./build/cli.cjs",
+            "default": "./build/cli.js"
+        },
+        "./package.json": "./package.json"
     },
     "bin": {
         "toildefender": "toildefender.js"
     },
     "scripts": {
-        "test": "node --test test/*.test.js",
+        "build": "vite build && tsc -p tsconfig.build.json",
+        "typecheck": "tsc -p tsconfig.json",
+        "lint": "eslint src",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "test": "npm run build && node --test test/*.test.js test/*.test.cjs",
         "test:firefox": "node test/firefox-smoke.mjs",
-        "pack:dry": "npm pack --dry-run"
+        "pack:dry": "npm pack --dry-run",
+        "prepack": "npm run build"
     },
     "toildefender": {
         "mainFiles": [
@@ -44,16 +65,9 @@
         ]
     },
     "files": [
-        "cli.js",
+        "build",
         "defendjs.js",
-        "estest.js",
-        "esutils.js",
-        "logger.js",
-        "obfuscator.js",
-        "processors",
         "toildefender.js",
-        "traverser.js",
-        "utils.js",
         "LICENSE",
         "NOTICE.md",
         "README.md",
@@ -80,7 +94,19 @@
     },
     "license": "AGPL-3.0",
     "devDependencies": {
+        "@eslint/js": "^10.0.1",
+        "@types/escodegen": "^0.0.10",
+        "@types/esprima": "^4.0.6",
+        "@types/estraverse": "^5.1.7",
+        "@types/estree": "^1.0.9",
+        "@types/lodash": "^4.17.24",
+        "@types/minimist": "^1.2.5",
+        "@types/node": "^26.0.0",
+        "eslint": "^10.5.0",
         "playwright": "^1.61.0",
+        "prettier": "^3.8.4",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.61.1",
         "vite": "^8.0.16"
     }
 }

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
-import toildefender from "../toildefender.js";
+import toildefender from "../build/toildefender.js";
+
+const optionalRequire = createRequire(import.meta.url);
 
 const FEATURES = {
     dead_code: true,
@@ -69,8 +72,8 @@ function createRunContext() {
 
 function hasOptionalBabelTransform() {
     try {
-        require.resolve("@babel/core");
-        require.resolve("@babel/preset-env");
+        optionalRequire.resolve("@babel/core");
+        optionalRequire.resolve("@babel/preset-env");
         return true;
     } catch (error) {
         return false;

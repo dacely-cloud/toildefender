@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import Preprocessing from "../processors/preprocessing.js";
+import Preprocessing from "../build/processors/preprocessing.js";
 
 function preprocess(code, variables = {}) {
     const processor = new Preprocessing({ warn () {} });
