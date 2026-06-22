@@ -3,9 +3,9 @@
 <img src="./images/toildefender6.svg" alt="ToilDefender" width="600" />
 
 
-### JavaScript code protection for the Toil stack.
+### TypeScript-first JavaScript code protection for the Toil stack.
 
-<sub>Randomized control flow, literal protection, object packing, BigInt-backed VM bytecode, and hash-mesh bytecode unlock for browser and Node bundles.</sub>
+<sub>Typed ESM/CommonJS package with randomized control flow, literal protection, object packing, BigInt-backed VM bytecode, and hash-mesh bytecode unlock for browser and Node bundles.</sub>
 
 <br/>
 
@@ -18,9 +18,10 @@
 
 ---
 
-ToilDefender is Dacely's maintained JavaScript protection layer for the Toil
-technology stack. It started from the original `defendjs` project, but this
-fork is now maintained as its own package: `@dacely/toildefender`.
+ToilDefender is Dacely's maintained TypeScript-authored JavaScript protection
+layer for the Toil technology stack. It started from the original `defendjs`
+project, but this fork is now maintained as its own typed package:
+`@dacely/toildefender`.
 
 The goal is not to make client-side JavaScript impossible to analyze. That is
 not a real promise. The goal is to raise reverse-engineering cost by removing
@@ -32,10 +33,18 @@ VM programs.
 npm install @dacely/toildefender
 ```
 
-```js
-const toildefender = require("@dacely/toildefender");
+```ts
+import { protect, type ToilDefenderOptions } from "@dacely/toildefender";
 
-const result = toildefender.do({
+const source = `
+function licenseGate(input) {
+    return input.length > 8 && input.charCodeAt(0) === 84;
+}
+
+globalThis.__result = licenseGate("ToilDefender");
+`;
+
+const options: ToilDefenderOptions = {
     code: source,
     modulesCode: {},
     logLevel: "error",
@@ -70,10 +79,31 @@ const result = toildefender.do({
             chaffRatio: 0.55
         }
     }
-});
+};
+
+const result = protect(options);
 
 console.log(result.code);
 ```
+
+## Package Format
+
+The public package is authored in TypeScript and built with Vite 8. Published
+artifacts are emitted into `build/` as dual module targets:
+
+| Consumer | Entry |
+| --- | --- |
+| ESM | `import toildefender, { protect, do, features } from "@dacely/toildefender"` |
+| CommonJS | Legacy compatibility through the package `exports.require` entry. |
+| Types | `import type { ToilDefenderOptions, ToilDefenderResult } from "@dacely/toildefender"` |
+| CLI | `toildefender --help` |
+
+`protect(options)` and `do(options)` are the same public function. The default
+export keeps the classic object shape: `{ protect, do, features }`.
+
+The package requires Node `>=24.11.0`. Type declarations are generated from the
+source and shipped through the package `exports` map, so TypeScript consumers do
+not need `@types` packages.
 
 ## What It Does
 
@@ -109,9 +139,20 @@ Original logic disappears from the output bundle. Attackers no longer reverse
 plain JavaScript; they must recover the VM, decode the bytecode format,
 reconstruct the instruction set, and emulate the protected program.
 
-```js
-toildefender.do({
-    code,
+```ts
+import { protect, type ToilDefenderOptions } from "@dacely/toildefender";
+
+const source = `
+function validateLicense(input) {
+    const total = input.length * 7;
+    return input.charCodeAt(0) === 86 ? total + 13 : total - 5;
+}
+
+globalThis.__result = validateLicense("VM-Protected");
+`;
+
+const options: ToilDefenderOptions = {
+    code: source,
     modulesCode: {},
     features: {
         numeric_vm: true
@@ -130,7 +171,9 @@ toildefender.do({
             seed: "build-seed"
         }
     }
-});
+};
+
+const result = protect(options);
 ```
 
 Selection modes:
@@ -150,7 +193,8 @@ literals. Unsupported syntax remains native or is skipped by selection.
 
 Input:
 
-```js
+```ts
+const demoSource = `
 function licenseGate(input) {
     const total = input.length * 7;
     return input.charCodeAt(0) === 86
@@ -159,44 +203,53 @@ function licenseGate(input) {
 }
 
 globalThis.__result = licenseGate("ToilDefender");
+`;
 ```
 
 The demo artifact is generated with every major protection enabled and
 compression disabled so the runtime stays readable:
 
-```js
-features: {
-    dead_code: true,
-    scope: true,
-    control_flow: true,
-    identifiers: true,
-    numeric_vm: true,
-    object_packing: true,
-    literals: true,
-    mangle: true,
-    compress: false
-},
-protections: {
-    virtualMachine: {
-        enabled: true,
-        mode: "aggressive",
-        bigintBytecode: true,
-        randomizedOpcodes: true,
-        encodeConstants: true,
-        perFunctionDialect: true,
-        virtualize: "all-supported",
-        seed: "readme-all-modes-demo"
+```ts
+import { protect, type ToilDefenderOptions } from "@dacely/toildefender";
+
+const demoOptions: ToilDefenderOptions = {
+    code: demoSource,
+    modulesCode: {},
+    features: {
+        dead_code: true,
+        scope: true,
+        control_flow: true,
+        identifiers: true,
+        numeric_vm: true,
+        object_packing: true,
+        literals: true,
+        mangle: true,
+        compress: false
     },
-    hashMesh: {
-        enabled: true,
-        mode: "aggressive",
-        unlock: "per-function",
-        deriveDialectFromMesh: true,
-        bindToVmState: true,
-        encodeChaff: true,
-        chaffRatio: 0.55
+    protections: {
+        virtualMachine: {
+            enabled: true,
+            mode: "aggressive",
+            bigintBytecode: true,
+            randomizedOpcodes: true,
+            encodeConstants: true,
+            perFunctionDialect: true,
+            virtualize: "all-supported",
+            seed: "readme-all-modes-demo"
+        },
+        hashMesh: {
+            enabled: true,
+            mode: "aggressive",
+            unlock: "per-function",
+            deriveDialectFromMesh: true,
+            bindToVmState: true,
+            encodeChaff: true,
+            chaffRatio: 0.55
+        }
     }
-}
+};
+
+const demoResult = protect(demoOptions);
 ```
 
 The complete beautified generated output is committed at
@@ -315,9 +368,20 @@ bytecode chunk decrypts incorrectly instead of exposing runnable logic.
 This turns integrity checks into decryption requirements instead of patchable
 boolean branches.
 
-```js
-toildefender.do({
-    code,
+```ts
+import { protect, type ToilDefenderOptions } from "@dacely/toildefender";
+
+const source = `
+function licenseGate(input) {
+    const total = input.length * 7;
+    return input.charCodeAt(0) === 86 ? total + 13 : total - 5;
+}
+
+globalThis.__result = licenseGate("Hash-Mesh");
+`;
+
+const options: ToilDefenderOptions = {
+    code: source,
     modulesCode: {},
     features: {
         numeric_vm: true
@@ -339,7 +403,9 @@ toildefender.do({
             serverBound: false
         }
     }
-});
+};
+
+const result = protect(options);
 ```
 
 Hash-Mesh is an obfuscation and tamper-resistance layer. It is not a
@@ -375,30 +441,58 @@ For multi-entry projects, declare entry files in `package.json`:
 The old `defendjs.mainFiles` field is still read as a compatibility fallback,
 but new projects should use `toildefender`.
 
-## API
+## API And Types
 
-```js
-const toildefender = require("@dacely/toildefender");
+ESM and TypeScript:
 
-const result = toildefender.do({
+```ts
+import toildefender, {
+    protect,
+    type FeatureConfig,
+    type ToilDefenderOptions,
+    type ToilDefenderResult
+} from "@dacely/toildefender";
+
+const features: Partial<FeatureConfig> = {
+    dead_code: false,
+    scope: true,
+    control_flow: true,
+    identifiers: true,
+    numeric_vm: false,
+    object_packing: true,
+    literals: true,
+    mangle: true,
+    compress: true
+};
+
+const options: ToilDefenderOptions = {
     code: "function add(a,b){ return a + b } globalThis.x = add(1,2)",
     modulesCode: {},
     logLevel: "warn",
-    features: {
-        dead_code: false,
-        scope: true,
-        control_flow: true,
-        identifiers: true,
-        numeric_vm: false,
-        object_packing: true,
-        literals: true,
-        mangle: true,
-        compress: true
-    }
-});
+    features
+};
+
+const result: ToilDefenderResult = protect(options);
 
 console.log(result.code);
+console.log(toildefender.features.control_flow.default);
 ```
+
+Named exports are available in ESM as `protect`, `do`, and `features`. The
+default export keeps the compatibility object with the same members. CommonJS
+callers remain supported through the package exports map, but new code should
+use the typed ESM API.
+
+Exported TypeScript types:
+
+| Type | Purpose |
+| --- | --- |
+| `ToilDefenderOptions` | Full input configuration for `protect` / `do`. |
+| `ToilDefenderResult` | Protected output object with `code` and optional `map`. |
+| `FeatureName`, `FeatureConfig`, `FeatureDescriptions` | Feature switch and metadata types. |
+| `ProtectionOptions`, `NumericVmOptions`, `HashMeshOptions` | VM and Hash-Mesh configuration. |
+| `ControlFlowOptions`, `ScopeOptions` | Seed and ratio controls for those passes. |
+| `LogLevel`, `LogAdapter` | Typed logging integration. |
 
 Main options:
 
@@ -407,13 +501,20 @@ Main options:
 | `code` | Entry source code. |
 | `modulesCode` | Map of dependency filename to source code. |
 | `features` | Feature switches for the classic pipeline. |
+| `forceFeatures` | Compatibility/testing override for feature selection after option merging; normal callers should use `features`. |
 | `babel` | Defaults to `false`; set to `true` only when you want the optional Babel downlevel transform before protection. |
 | `babelPreserveAsync` | Defaults to `true`; when `babel: true`, keeps async/generator syntax native so async-aware flattening can avoid Babel regenerator helper bloat. Set to `false` for legacy async lowering. |
+| `babelTarget` | Babel target string used only when optional Babel lowering is enabled. |
 | `protections.virtualMachine` | User-facing VM bytecode backend configuration. |
 | `protections.hashMesh` | User-facing hash-mesh unlock configuration. |
 | `numericVm` | Lower-level numeric VM configuration retained for internal callers. |
+| `controlFlow` | Control-flow pass seed and ratio. |
+| `scope` | Scope-flattening pass seed and ratio. |
 | `preprocessorVariables` | Compile-time preprocessor constants. |
+| `runtimeHelpers` | Controls whether generated runtime helpers are emitted. |
+| `simplify` | Enables the post-generation simplify pass. |
 | `logLevel` | `error`, `warn`, `info`, `debug`, or `log`. |
+| `logAdapter` | Receives typed log callbacks when custom logging is needed. |
 
 The default path parses modern syntax directly and normalizes the constructs
 that older obfuscation passes cannot consume yet. The native AST path supports
@@ -471,10 +572,21 @@ Put real authorization and durable decisions on the server.
 ## Development
 
 ```bash
+npm run build
+npm run typecheck
+npm run lint
 npm test
 npm run test:firefox
 npm run pack:dry
 ```
+
+Source lives under `src/` as TypeScript. `npm run build` runs the Vite 8 library
+build for ESM and CommonJS, then emits declaration files with
+`tsconfig.build.json`.
+
+Generated package artifacts live under `build/` and are intentionally ignored in
+git. The root `toildefender.js` and `defendjs.js` shims load the built CLI and
+library output for package compatibility.
 
 The regression suite covers modern syntax handling, object packing, VM bytecode
 execution, Hash-Mesh unlock, and tamper failure behavior.
