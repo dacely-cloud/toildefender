@@ -21,7 +21,7 @@ function toildefender$numericVmString(program, length, salt) {
 
 function toildefender$numericVmPow(a, b) {
     if (typeof a === "bigint" && typeof b === "bigint") {
-        if (b < BigInt(0)) throw new RangeError("BigInt exponent must be positive");
+        if (b < BigInt(0)) throw new RangeError();
         var out = BigInt(1);
         var base = a;
         var exp = b;
@@ -184,7 +184,7 @@ function toildefender$numericVmRun(program, base, tokenCount, seed, tag, constan
             i += 1;
         }
 
-        if ((seen >>> 0) !== (tag >>> 0)) throw new Error("invalid numeric vm program");
+        if ((seen >>> 0) !== (tag >>> 0)) throw new Error();
         if (cache) {
             cache[2] = plainCache;
             cache[3] = stateCache;
@@ -259,7 +259,7 @@ function toildefender$numericVmRun(program, base, tokenCount, seed, tag, constan
     }
 
     function read() {
-        if (ip < 0 || ip >= tokenCount) throw new Error("invalid virtual opcode");
+        if (ip < 0 || ip >= tokenCount) throw new Error();
         var value = decodeAt(ip);
         ip += 1;
         return value;
@@ -341,7 +341,7 @@ function toildefender$numericVmRun(program, base, tokenCount, seed, tag, constan
         if (op === ops[45]) { storeLocal(readUnsigned(), pop()); continue; }
         if (op === ops[46]) { var jn = readSigned(); var nv = pop(); if (nv === null || nv === undefined) ip += jn; continue; }
         if (op === ops[47]) { push(Number(pop())); continue; }
-        throw new Error("invalid virtual opcode");
+        throw new Error();
     }
 }
 `;
@@ -417,6 +417,15 @@ interface ProgramRecord {
     seed: number;
     tag: number;
     tokenCount: number;
+}
+
+interface RuntimeProfile {
+    cachePrefix: string;
+    dataPrefix: string;
+    meshPrefix: string;
+    names: Record<string, string>;
+    opsPrefix: string;
+    slots: Record<OpName, number>;
 }
 
 interface VmCallRefs {
@@ -828,6 +837,7 @@ class Compiler {
     fn: AstNode;
     dialect: Dialect;
     options: NumericVmResolvedOptions;
+    runtime: RuntimeProfile;
     instructions: Instruction[] = [];
     labelId = 0;
     params: Record<string, number> = {};
@@ -839,10 +849,11 @@ class Compiler {
     references: string[] = [];
     referenceKeys: Record<string, number> = Object.create(null) as Record<string, number>;
 
-    constructor(fn: AstNode, dialect: Dialect, options: NumericVmResolvedOptions) {
+    constructor(fn: AstNode, dialect: Dialect, options: NumericVmResolvedOptions, runtime: RuntimeProfile) {
         this.fn = fn;
         this.dialect = dialect;
         this.options = options;
+        this.runtime = runtime;
     }
 
     label(): string { return `L${this.labelId++}`; }
@@ -1259,7 +1270,7 @@ class Compiler {
         if (constant.kind === "string" || constant.kind === "reference") {
             const value = String(constant.value);
             const salt = (next() & 65535) || 1;
-            const decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(value, salt), next), literal(value.length), literal(salt) ]);
+            const decoded = call(identifier(this.runtime.names["toildefender$numericVmString"]), [ bigintExpression(stringBlob(value, salt), next), literal(value.length), literal(salt) ]);
             if (constant.kind === "reference") {
                 return {
                     type: "ConditionalExpression",
@@ -1279,7 +1290,7 @@ class Compiler {
         const next = this.dialect.next;
         const name = String(value);
         const salt = (next() & 65535) || 1;
-        const decoded = call(identifier("toildefender$numericVmString"), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
+        const decoded = call(identifier(this.runtime.names["toildefender$numericVmString"]), [ bigintExpression(stringBlob(name, salt), next), literal(name.length), literal(salt) ]);
         return {
             type: "ConditionalExpression",
             test: binary("===", unary("typeof", identifier(name)), literal("undefined")),
@@ -1310,7 +1321,10 @@ class Compiler {
         this.fuseSuperinstructions();
         const tokens = this.assemble();
         const encrypted = encryptedStream(tokens, this.dialect.base, this.dialect.seed);
-        const opValues = OP_NAMES.map((name: OpName) => this.dialect.opcodes[name]);
+        const opValues = Array<number>(OP_NAMES.length);
+        OP_NAMES.forEach((name: OpName) => {
+            opValues[this.runtime.slots[name]] = this.dialect.opcodes[name];
+        });
         const record: ProgramRecord = {
             base: this.dialect.base,
             blob: packTokens(encrypted.encrypted, this.dialect.base),
@@ -1339,8 +1353,157 @@ function makeDialect(seedText: string): Dialect {
     return { base: BASES[next() % BASES.length], next: next, opcodes: opcodes, seed: seed };
 }
 
-function vmCall(record: ProgramRecord, next: () => number, refs: VmCallRefs = {}): AstNode {
-    return call(identifier("toildefender$numericVmRun"), [
+const RUNTIME_HELPERS = [
+    "toildefender$numericVmString",
+    "toildefender$numericVmPow",
+    "toildefender$numericVmDigit",
+    "toildefender$hashMeshMix",
+    "toildefender$hashMeshValue",
+    "toildefender$hashMeshKey",
+    "toildefender$hashMeshStream",
+    "toildefender$hashMeshUnlock",
+    "toildefender$numericVmRun"
+];
+
+const RUNTIME_GLOBALS = new Set([
+    "Array",
+    "BigInt",
+    "Error",
+    "Math",
+    "Number",
+    "Object",
+    "RangeError",
+    "String",
+    "undefined"
+]);
+
+function privateName(next: () => number, used: Set<string>): string {
+    let name = "";
+    do {
+        name = "_" + (next() >>> 0).toString(36);
+    } while (used.has(name));
+    used.add(name);
+    return name;
+}
+
+function makeRuntimeProfile(options: NumericVmResolvedOptions): RuntimeProfile {
+    const next = makeRng(hashSeed(`${options.seed}:runtime-profile:v2`));
+    const used = new Set<string>();
+    const names: Record<string, string> = Object.create(null) as Record<string, string>;
+    RUNTIME_HELPERS.forEach((name) => {
+        names[name] = privateName(next, used);
+    });
+    const slotValues = shuffle(Array.from({ length: OP_NAMES.length }, function (_: unknown, index: number) { return index; }), next);
+    const slots = Object.create(null) as Record<OpName, number>;
+    OP_NAMES.forEach((name: OpName, index: number) => {
+        slots[name] = slotValues[index];
+    });
+    return {
+        cachePrefix: privateName(next, used),
+        dataPrefix: privateName(next, used),
+        meshPrefix: privateName(next, used),
+        names,
+        opsPrefix: privateName(next, used),
+        slots
+    };
+}
+
+function isStaticMemberProperty(node: AstNode, stack: AstStackFrame[]): boolean {
+    const parent = stack[1];
+    if (!parent) return false;
+    if (parent.node.type === "MemberExpression" && parent.key === "property" && !nodeFlag(parent.node, "computed")) return true;
+    if (parent.node.type === "Property" && parent.key === "key" && !nodeFlag(parent.node, "computed")) return true;
+    if (parent.node.type === "MethodDefinition" && parent.key === "key" && !nodeFlag(parent.node, "computed")) return true;
+    return false;
+}
+
+function rewriteRuntimeOpcodeSlots(ast: AstNode, runtime: RuntimeProfile): AstNode {
+    return traverser.traverse(ast, [], function (node: AstNode) {
+        if (node.type !== "MemberExpression") return node;
+        const object = childNode(node, "object");
+        const property = childNode(node, "property");
+        const index = nodeValue(property);
+        if (object?.type !== "Identifier" || nodeName(object) !== "ops") return node;
+        if (property?.type !== "Literal" || typeof index !== "number") return node;
+        const opName = OP_NAMES[index];
+        if (opName === undefined) return node;
+        setNodeField(node, "property", literal(runtime.slots[opName]));
+        return node;
+    });
+}
+
+function isRuntimeOpcodeHandler(node: AstNode): boolean {
+    if (node.type !== "IfStatement") return false;
+    const test = childNode(node, "test");
+    if (!test || test.type !== "BinaryExpression" || nodeOperator(test) !== "===") return false;
+    const left = childNode(test, "left");
+    const right = childNode(test, "right");
+    if (left?.type !== "Identifier" || nodeName(left) !== "op") return false;
+    if (right?.type !== "MemberExpression") return false;
+    const object = childNode(right, "object");
+    const property = childNode(right, "property");
+    return object?.type === "Identifier"
+        && nodeName(object) === "ops"
+        && property?.type === "Literal"
+        && typeof nodeValue(property) === "number";
+}
+
+function shuffleRuntimeHandlers(ast: AstNode, runtime: RuntimeProfile): AstNode {
+    const next = makeRng(hashSeed(`${Object.values(runtime.slots).join(":")}:runtime-handlers:v2`));
+    return traverser.traverse(ast, [], function (node: AstNode) {
+        if (node.type !== "BlockStatement") return node;
+        const body = bodyArray(node);
+        let start = -1;
+        for (let i = 0; i < body.length; i += 1) {
+            if (!isRuntimeOpcodeHandler(body[i])) continue;
+            start = i;
+            break;
+        }
+        if (start < 0) return node;
+
+        let end = start;
+        while (end < body.length && isRuntimeOpcodeHandler(body[end])) {
+            end += 1;
+        }
+        if (end - start < OP_NAMES.length) return node;
+
+        const shuffled = shuffle(body.slice(start, end), next);
+        for (let i = 0; i < shuffled.length; i += 1) {
+            body[start + i] = shuffled[i];
+        }
+        return node;
+    });
+}
+
+function renameRuntimeIdentifiers(ast: AstNode, runtime: RuntimeProfile): AstNode {
+    const next = makeRng(hashSeed(`${Object.values(runtime.names).join(":")}:runtime-identifiers:v2`));
+    const used = new Set<string>(Object.values(runtime.names));
+    const names = Object.create(null) as Record<string, string>;
+    Object.entries(runtime.names).forEach(([name, replacement]) => {
+        names[name] = replacement;
+    });
+    return traverser.traverse(ast, [], function (node: AstNode, stack: AstStackFrame[]) {
+        if (node.type !== "Identifier") return node;
+        if (isStaticMemberProperty(node, stack)) return node;
+        const name = nodeName(node);
+        if (name === null || RUNTIME_GLOBALS.has(name)) return node;
+        if (names[name] === undefined) {
+            names[name] = privateName(next, used);
+        }
+        return identifier(names[name]);
+    });
+}
+
+function runtimeAst(profile: RuntimeProfile): AstNode {
+    const ast = replaceStaticBigIntCalls(esprima.parseScript(RUNTIME) as unknown as AstNode);
+    rewriteRuntimeOpcodeSlots(ast, profile);
+    shuffleRuntimeHandlers(ast, profile);
+    renameRuntimeIdentifiers(ast, profile);
+    return markNumericVmInternal(ast);
+}
+
+function vmCall(record: ProgramRecord, next: () => number, runtime: RuntimeProfile, refs: VmCallRefs = {}): AstNode {
+    return call(identifier(runtime.names["toildefender$numericVmRun"]), [
         bigintExpression(record.blob, next),
         literal(record.base),
         literal(record.tokenCount),
@@ -1416,7 +1579,8 @@ export default class NumericVm {
         assert.ok(estest.isNode(ast));
         if (!this.options.enabled) return ast;
 
-        const runtime = markNumericVmInternal(replaceStaticBigIntCalls(esprima.parseScript(RUNTIME) as unknown as AstNode));
+        const runtimeProfile = makeRuntimeProfile(this.options);
+        const runtime = runtimeAst(runtimeProfile);
         let transformed = 0;
         let candidateIndex = 0;
         const dataDeclarations: AstNode[] = [];
@@ -1432,11 +1596,11 @@ export default class NumericVm {
                 const body = childNode(node, "body");
                 const originalBodySize = body ? bodyArray(body).length : 0;
                 const dialect = makeDialect(`${this.options.seed}:${transformed}:${functionName(node)}`);
-                const record = new Compiler(node, dialect, this.options).compile();
-                const dataName = `toildefender$numericVmData$${transformed}`;
-                const opsName = `toildefender$numericVmOps$${transformed}`;
-                const meshName = `toildefender$numericVmMesh$${transformed}`;
-                const cacheName = `toildefender$numericVmCache$${transformed}`;
+                const record = new Compiler(node, dialect, this.options, runtimeProfile).compile();
+                const dataName = `${runtimeProfile.dataPrefix}${transformed}`;
+                const opsName = `${runtimeProfile.opsPrefix}${transformed}`;
+                const meshName = `${runtimeProfile.meshPrefix}${transformed}`;
+                const cacheName = `${runtimeProfile.cachePrefix}${transformed}`;
                 const declarations = [
                     variableDeclaration(dataName, arrayExpression(record.constants)),
                     variableDeclaration(opsName, arrayExpression(record.opValues)),
@@ -1447,7 +1611,7 @@ export default class NumericVm {
                     setNodeField(declaration, "toildefender$numericVmInternal", true);
                     dataDeclarations.push(declaration);
                 });
-                setNodeField(node, "body", { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next, {
+                setNodeField(node, "body", { type: "BlockStatement", body: [ returnStatement(vmCall(record, dialect.next, runtimeProfile, {
                     cache: identifier(cacheName),
                     constants: identifier(dataName),
                     mesh: identifier(meshName),
