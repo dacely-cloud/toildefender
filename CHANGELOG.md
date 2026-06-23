@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.2.1] - 2026-06-23
+
+- No changes
+
+
 ## [v0.2.0] - 2026-06-22
 
 - No changes
