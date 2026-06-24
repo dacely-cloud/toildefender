@@ -1463,6 +1463,25 @@ test("virtual machine runtime caches encrypted bytecode without emitting decoded
     assert.deepEqual(run(defended), run(code));
 });
 
+test("virtual machine runtime emits computed switch dispatch instead of a linear opcode chain", () => {
+    const code = `
+        function bob(value) {
+            var total = value + 4;
+            if (total > 10) return total * 3;
+            return total - 2;
+        }
+        globalThis.__result = [bob(9), bob(1)];
+    `;
+    const defended = defendVmCode(code);
+    const switchIndex = defended.indexOf("switch");
+    const dispatchChunk = defended.slice(switchIndex, switchIndex + 8_000);
+
+    assert.notEqual(switchIndex, -1);
+    assert.match(dispatchChunk, /case\s+[$_\w]+\[\d+\]:/);
+    assert.doesNotMatch(dispatchChunk, /if\s*\([^)]*===\s*[$_\w]+\[\d+\][^)]*\)/);
+    assert.deepEqual(run(defended), run(code));
+});
+
 test("virtual machine protection preserves nullish coalescing semantics", () => {
     const code = `
         function choose(value) {

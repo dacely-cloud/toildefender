@@ -1475,6 +1475,59 @@ function shuffleRuntimeHandlers(ast: AstNode, runtime: RuntimeProfile): AstNode 
     });
 }
 
+function runtimeHandlerCase(node: AstNode): AstNode | null {
+    if (!isRuntimeOpcodeHandler(node)) return null;
+    const test = requiredChild(node, "test");
+    const caseTest = requiredChild(test, "right");
+    const consequent = childNode(node, "consequent");
+    const statements =
+        consequent?.type === "BlockStatement"
+            ? bodyArray(consequent)
+            : consequent === null
+              ? []
+              : [consequent];
+    return {
+        type: "SwitchCase",
+        test: caseTest,
+        consequent: statements
+    };
+}
+
+function switchRuntimeHandlers(ast: AstNode, runtime: RuntimeProfile): AstNode {
+    const next = makeRng(hashSeed(`${Object.values(runtime.slots).join(":")}:runtime-switch:v1`));
+    return traverser.traverse(ast, [], function (node: AstNode) {
+        if (node.type !== "BlockStatement") return node;
+        const body = bodyArray(node);
+        let start = -1;
+        for (let i = 0; i < body.length; i += 1) {
+            if (!isRuntimeOpcodeHandler(body[i])) continue;
+            start = i;
+            break;
+        }
+        if (start < 0) return node;
+
+        let end = start;
+        while (end < body.length && isRuntimeOpcodeHandler(body[end])) {
+            end += 1;
+        }
+        if (end - start < OP_NAMES.length) return node;
+
+        const cases = shuffle(
+            body
+                .slice(start, end)
+                .map(runtimeHandlerCase)
+                .filter((handlerCase: AstNode | null): handlerCase is AstNode => handlerCase !== null),
+            next
+        );
+        body.splice(start, end - start, {
+            type: "SwitchStatement",
+            discriminant: identifier("op"),
+            cases
+        });
+        return node;
+    });
+}
+
 function renameRuntimeIdentifiers(ast: AstNode, runtime: RuntimeProfile): AstNode {
     const next = makeRng(hashSeed(`${Object.values(runtime.names).join(":")}:runtime-identifiers:v2`));
     const used = new Set<string>(Object.values(runtime.names));
@@ -1498,6 +1551,7 @@ function runtimeAst(profile: RuntimeProfile): AstNode {
     const ast = replaceStaticBigIntCalls(esprima.parseScript(RUNTIME) as unknown as AstNode);
     rewriteRuntimeOpcodeSlots(ast, profile);
     shuffleRuntimeHandlers(ast, profile);
+    switchRuntimeHandlers(ast, profile);
     renameRuntimeIdentifiers(ast, profile);
     return markNumericVmInternal(ast);
 }
