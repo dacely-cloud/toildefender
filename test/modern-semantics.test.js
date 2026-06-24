@@ -551,6 +551,42 @@ test("scope ratio can avoid scope object flattening", () => {
     assert.deepEqual(run(retained), run(code));
 });
 
+test("scope ratio is respected for program scope when control flow is enabled", () => {
+    const code = `
+        var topLevel = 7;
+        var localValue = topLevel + 3;
+        globalThis.__result = localValue * 2;
+    `;
+    const features = {
+        dead_code: false,
+        scope: true,
+        control_flow: true,
+        identifiers: false,
+        numeric_vm: false,
+        object_packing: false,
+        literals: false,
+        mangle: false,
+        compress: false
+    };
+    const defended = toildefender.do({
+        code,
+        modulesCode: {},
+        forceFeatures: features,
+        scope: {
+            ratio: 0,
+            seed: "scope-control-flow-program-ratio-test"
+        },
+        controlFlow: {
+            ratio: 0.5,
+            seed: "scope-control-flow-program-ratio-test"
+        },
+        logLevel: "error"
+    }).code;
+
+    assert.doesNotMatch(defended, /\$\$scope\$/);
+    assert.deepEqual(run(defended), run(code));
+});
+
 test("scope flattening keeps loop block locals separate from function helpers", () => {
     const code = `
         function collectRows(globals) {

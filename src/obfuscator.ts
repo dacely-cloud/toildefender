@@ -774,7 +774,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             scopes.createScopeObjects(ast, escope.analyze(ast, lexicalScopeOptions), {
                 ratio: scopeRatio,
                 seed: options.scope.seed || "toildefender-scope",
-                forceProgram: controlFlowActive
+                forceProgram: controlFlowActive && scopeRatio >= 1
             });
         });
         
