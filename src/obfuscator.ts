@@ -798,8 +798,16 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
             const scopeManager = escope.analyze(ast, lexicalScopeOptions);
             fns = asAstNodeArray(methods.extractMethods(ast));
             fns = fns.map((method: AstNode) => {
-                const refers = methods.methodRefersToArguments(method, scopeManager);
-                const scopeArgumentCount = refers ? nodeParams(method).filter((param) => nodeName(param).indexOf("$$scope") == 0).length : 0;
+                // `bareArguments` (what `arguments` / `arguments.length` lower to) must
+                // be sliced by the number of scope params the scope pass prepended, so
+                // that user-visible `arguments` excludes the injected `$$scope` arg.
+                // This must NOT be gated on methodRefersToArguments(): that helper only
+                // detects *unresolved* `arguments` references, and misses `arguments.length`
+                // (escope resolves `arguments`), which left brand-check helpers like
+                // `#x in obj` reading a length that was off-by-one and returning the wrong
+                // value — corrupting downlevelled #private access. Param-index references
+                // already account for the prepend via the shifted param list.
+                const scopeArgumentCount = nodeParams(method).filter((param) => (nodeName(param) || "").indexOf("$$scope") == 0).length;
                 methods.removeFirstArguments(method, scopeArgumentCount);
                 return asAstNode(methods.replaceArgumentReferences(method, true));
             });
