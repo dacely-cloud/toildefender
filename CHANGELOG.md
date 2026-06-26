@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.2.2] - 2026-06-26
+
+### Other Changes
+
+- ⬆️(deps-dev): Bump the dev-deps group across 1 directory with 3 updates ([#9](https://github.com/dacely-cloud/toildefender/pull/9)) by @dependabot[bot]
+
+
+
+
 ## [v0.2.1] - 2026-06-23
 
 - No changes
