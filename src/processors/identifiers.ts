@@ -19,6 +19,8 @@ interface IdentifierScopeManager {
 
 interface ArrayizeObjectOptions {
     objectPacking?: boolean;
+    /** Retains method home objects and native method semantics. */
+    nativeSyntax?: boolean;
 }
 
 function nodeArray(value: unknown): AstNode[] {
@@ -100,8 +102,16 @@ function propertyValue(prop: AstNode): AstNode {
     return childNode(prop, "value") || { type: "Identifier", name: "undefined" };
 }
 
-function canPackObjectExpression(node: AstNode): boolean {
-    return nodeArray(nodeFields(node).properties).every((prop: AstNode) => prop.type != "SpreadElement" && childNode(prop, "key") !== null);
+function canPackObjectExpression(node: AstNode, nativeSyntax: boolean): boolean {
+    return nodeArray(nodeFields(node).properties).every((prop: AstNode): boolean => {
+        const key: AstNode | null = childNode(prop, "key");
+        return prop.type === "Property"
+            && nodeFields(prop).kind === "init"
+            && (!nativeSyntax || nodeFields(prop).method !== true)
+            && !nodeComputed(prop)
+            && key !== null
+            && objectKey(prop) !== "__proto__";
+    });
 }
 
 function isBigIntLiteral(node: AstNode): boolean {
@@ -186,7 +196,7 @@ export default class Identifiers {
                 if (options.objectPacking === false) {
                     return node;
                 }
-                if (!canPackObjectExpression(node)) {
+                if (!canPackObjectExpression(node, options.nativeSyntax === true)) {
                     return node;
                 }
 

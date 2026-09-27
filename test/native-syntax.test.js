@@ -16,6 +16,9 @@ function execute(code) {
 }
 
 for (const [name, code] of [
+    ['reactive getters and setters', `let selected=0;const props={get options(){return ['first','second'];},get value(){return selected;},set value(next){selected=next;}};const before=props.value;props.value=1;globalThis.result=[props.options,before,props.value,selected];`],
+    ['computed keys and property evaluation order', `let count=0;const key=Symbol('key');const value={['field'+(++count)]:count,[key]:3};globalThis.result=[value.field1,value[key],count];`],
+    ['object prototype and method home object', `const parent={read(){return 4;}};const value={__proto__:parent,read(){return super.read()+1;}};globalThis.result=[value.read(),Object.getPrototypeOf(value)===parent];`],
     ['private methods, fields and brands', `class Counter { #value=2; #read(){return this.#value;} read(){return this.#read();} has(value){return #value in value;} } const c=new Counter();globalThis.result=[c.read(),c.has(c),c.has({})];`],
     ['static initialization and class self references', `class Counter { static #value=1; static { this.#value++; } static read(){return Counter.#value;} }globalThis.result=Counter.read();`],
     ['private names in nested classes', `class Outer { #value=1; create(){return new class { #value=2; read(){return this.#value;} }();} read(){return this.#value;} }const o=new Outer();globalThis.result=[o.read(),o.create().read()];`],

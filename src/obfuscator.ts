@@ -748,7 +748,8 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         
         ast = asAstNode(identifiers.computeProperties(ast));
         ast = asAstNode(identifiers.arrayizeObjects(ast, {
-            objectPacking: options.features.object_packing !== false
+            objectPacking: options.features.object_packing !== false,
+            nativeSyntax: options.nativeSyntax
         }));
         //ast = identifiers.moveIdentifiers(ast, escope.analyze(ast, scopeOptions));
         //^ why is this commented out?
