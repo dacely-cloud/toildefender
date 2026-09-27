@@ -796,7 +796,8 @@ export default class Normalizer {
     logger: LoggerLike;
     rngAlpha: RandomAlphaLike;
 
-    constructor (logger: LoggerLike) {
+    /** Native control flow preserves iterator closing, loop bindings, and finally completion. */
+    constructor (logger: LoggerLike, public readonly preserveControlFlow: boolean = false) {
         this.logger = logger;
         this.rngAlpha = new utils.UniqueRandomAlpha(3);
     }
@@ -815,13 +816,13 @@ export default class Normalizer {
                 case "BlockStatement":
                     return this.simplifyBlockStatement(node);
                 case "ForStatement":
-                    return this.simplifyForStatement(node);
+                    return this.preserveControlFlow ? node : this.simplifyForStatement(node);
                 case "ForInStatement":
-                    return this.simplifyForStatement(this.simplifyForInStatement(node));
+                    return this.preserveControlFlow ? node : this.simplifyForStatement(this.simplifyForInStatement(node));
                 case "ForOfStatement":
-                    return this.simplifyForOfStatement(node);
+                    return this.preserveControlFlow ? node : this.simplifyForOfStatement(node);
                 case "TryStatement":
-                    return this.simplifyTryStatement(node);
+                    return this.preserveControlFlow ? node : this.simplifyTryStatement(node);
                 case "CallExpression":
                     return this.simplifyCallExpression(node);
                 case "ExpressionStatement":
@@ -947,7 +948,7 @@ export default class Normalizer {
         const update = childNode(node, "update");
         body.push({
             type: "WhileStatement",
-            test: childNode(node, "test"),
+            test: childNode(node, "test") ?? { type: "Literal", value: true },
             body: {
                 type: "BlockStatement",
                 body: blockToArray(requiredChild(node, "body")).concat(update ? [

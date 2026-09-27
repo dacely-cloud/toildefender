@@ -724,7 +724,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
     
     // Simplify graph
     doTask("simplify", options.simplify, () => {
-        const normalizer = new prNormalizer(logger);
+        const normalizer = new prNormalizer(logger, !options.features.scope && !controlFlowActive && !options.features.numeric_vm);
         ast = asAstNode(normalizer.simplify(ast));
     });
 

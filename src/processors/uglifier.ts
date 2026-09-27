@@ -239,20 +239,29 @@ function modernMangle(ast: AstNode): AstNode {
     const used = reserveUnrenamedNames(scopeManager, renamable);
     const parents = buildParentMap(ast);
     let next = 0;
+    const declarationNames = new WeakMap<AstNode, string>();
 
     variables.forEach((entry: VariableEntry) => {
-        let name: string;
-        do {
-            name = shortName(next);
-            next += 1;
-        } while (used.has(name) || RESERVED_WORDS.has(name));
-        used.add(name);
+        let name: string | undefined = entry.variable.identifiers
+            .map((identifier: AstNode): string | undefined => declarationNames.get(identifier))
+            .find((candidate: string | undefined): candidate is string => candidate !== undefined);
+        if (name === undefined) {
+            do {
+                name = shortName(next);
+                next += 1;
+            } while (used.has(name) || RESERVED_WORDS.has(name));
+            used.add(name);
+        }
+        const resolvedName: string = name;
+        entry.variable.identifiers.forEach((identifier: AstNode): void => {
+            declarationNames.set(identifier, resolvedName);
+        });
 
         entry.variable.identifiers.forEach((identifier: AstNode) => {
-            renameIdentifier(identifier, name, parents);
+            renameIdentifier(identifier, resolvedName, parents);
         });
         entry.variable.references.forEach((reference: ScopeReference) => {
-            renameIdentifier(reference.identifier, name, parents);
+            renameIdentifier(reference.identifier, resolvedName, parents);
         });
     });
 
