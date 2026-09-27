@@ -7,6 +7,8 @@ import path from "node:path";
 import * as modernParser from "@babel/parser";
 import _ from "lodash";
 import escodegen from "escodegen";
+import { generate as generateNative } from "astring";
+import type { Node as EstreeNode } from "estree";
 import type { GenerateOptions } from "escodegen";
 import escope from "escope";
 import * as esprima from "esprima";
@@ -121,6 +123,7 @@ function requireOptional<T>(name: string): T | null {
 }
 
 const defaultOptions: DefaultToilDefenderOptions = {
+    nativeSyntax: false,
     babel: false,
     babelTarget: "ie 11",
     babelPreserveAsync: true,
@@ -453,6 +456,9 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         options.features = options.forceFeatures;
     }
 
+    if (options.nativeSyntax && (options.features.scope || options.features.control_flow || options.features.numeric_vm || options.numericVm.enabled)) {
+        throw new Error("nativeSyntax requires scope, control_flow, and numeric_vm to be disabled");
+    }
     const logger = new Logger(options.logAdapter);
     let taskIndent = 1;
     /**
@@ -566,6 +572,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
 
             const modernParseOptions = {
                 sourceType: "unambiguous" as const,
+                ranges: true,
                 plugins: [
                     "estree",
                     "classProperties",
@@ -723,7 +730,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
     });
     
     // Simplify graph
-    doTask("simplify", options.simplify, () => {
+    doTask("simplify", options.simplify && !options.nativeSyntax, () => {
         const normalizer = new prNormalizer(logger, !options.features.scope && !controlFlowActive && !options.features.numeric_vm);
         ast = asAstNode(normalizer.simplify(ast));
     });
@@ -745,13 +752,13 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         }));
         //ast = identifiers.moveIdentifiers(ast, escope.analyze(ast, scopeOptions));
         //^ why is this commented out?
-        ast = asAstNode(identifiers.moveLiterals(ast, escope.analyze(ast, scopeOptions)));
+        ast = asAstNode(identifiers.moveLiterals(ast, options.nativeSyntax ? null : escope.analyze(ast, scopeOptions)));
     });
     
     doTask("literals", options.features.literals, () => {
         const literals = new prLiterals(logger);
         
-        literals.generateStrings(ast);
+        literals.generateStrings(ast, options.nativeSyntax);
     });
     
     doTask("scope", options.features.scope, () => {
@@ -989,7 +996,7 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
                     }
                 }
             ]
-        }));
+        }, options.nativeSyntax));
     });
     
     const codegenOptions: GenerateOptions = {
@@ -1005,7 +1012,9 @@ export function protect(inputOptions: ToilDefenderOptions): ToilDefenderResult {
         };
     });
     
-    const code = escodegen.generate(ast, codegenOptions);
+    const code = options.nativeSyntax
+        ? generateNative(ast as unknown as EstreeNode, options.features.compress ? { indent: "", lineEnd: "" } : {})
+        : escodegen.generate(ast, codegenOptions);
 
     const duration = Date.now() - start;
     

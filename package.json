@@ -76,8 +76,10 @@
     ],
     "dependencies": {
         "@babel/parser": "^8.0.0",
+        "astring": "1.9.0",
         "escodegen": "^2.1.0",
         "escope": "^4.0.0",
+        "eslint-scope": "9.1.2",
         "esprima": "^4.0.1",
         "esshorten": "1.1.1",
         "estraverse": "^5.3.0",

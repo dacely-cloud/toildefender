@@ -1,6 +1,10 @@
 import assert from "assert";
 import esshorten from "esshorten";
 import escope from "escope";
+import { analyze as analyzeNative } from "eslint-scope";
+import { generate } from "astring";
+import { parse } from "@babel/parser";
+import type { Program as EstreeProgram } from "estree";
 import estest from "../estest.js";
 import traverser from "../traverser.js";
 import type { AstNode, AstStackFrame, LoggerLike } from "../types.js";
@@ -129,7 +133,7 @@ function collectUnresolvedNames(scopeManager: MangleScopeManager): Set<string> {
     return names;
 }
 
-function isRenamableVariable(scope: MangleScope, variable: ScopeVariable, unresolvedNames: Set<string>): boolean {
+function isRenamableVariable(scope: MangleScope, variable: ScopeVariable, unresolvedNames: Set<string>, nativeSyntax: boolean = false): boolean {
     if (scope.type == "global") {
         return false;
     }
@@ -148,7 +152,7 @@ function isRenamableVariable(scope: MangleScope, variable: ScopeVariable, unreso
     if (variable.identifiers.length == 0) {
         return false;
     }
-    if (variable.defs?.some((def) => def.type == "ClassName")) {
+    if (!nativeSyntax && variable.defs?.some((def) => def.type == "ClassName")) {
         return false;
     }
     return true;
@@ -212,18 +216,28 @@ function renameIdentifier(identifier: AstNode, name: string, parents: WeakMap<As
     (identifier as { name?: string }).name = name;
 }
 
-function modernMangle(ast: AstNode): AstNode {
-    const scopeManager = escope.analyze(ast, {
+function modernMangle(ast: AstNode, nativeSyntax: boolean = false): AstNode {
+    if (nativeSyntax) {
+        /** Generated helpers need consistent ranges for lexical resolution of default parameters. */
+        ast = parse(generate(ast as unknown as EstreeProgram), {
+            sourceType: "unambiguous", plugins: ["estree"], ranges: true
+        }).program as unknown as AstNode;
+    }
+    const scopeManager = (nativeSyntax ? analyzeNative(ast as unknown as EstreeProgram, {
+        ecmaVersion: 2022,
+        optimistic: true,
+        sourceType: ast.sourceType === "module" ? "module" : "script"
+    }) : escope.analyze(ast, {
         ecmaVersion: 6,
         optimistic: true,
         sourceType: "script"
-    }) as unknown as MangleScopeManager;
+    })) as unknown as MangleScopeManager;
 
     const unresolvedNames = collectUnresolvedNames(scopeManager);
     const variables: VariableEntry[] = [];
     scopeManager.scopes.forEach((scope: MangleScope) => {
         scope.variables.forEach((variable: ScopeVariable) => {
-            if (isRenamableVariable(scope, variable, unresolvedNames)) {
+            if (isRenamableVariable(scope, variable, unresolvedNames, nativeSyntax)) {
                 variables.push({ scope, variable });
             }
         });
@@ -265,6 +279,20 @@ function modernMangle(ast: AstNode): AstNode {
         });
     });
 
+    if (nativeSyntax) {
+        const privateNames: Map<string, string> = new Map<string, string>();
+        traverser.traverse(ast, [], (node: AstNode): AstNode => {
+            if (node.type !== "PrivateIdentifier") return node;
+            const original: string = nodeName(node) || "";
+            let replacement: string | undefined = privateNames.get(original);
+            if (replacement === undefined) {
+                replacement = shortName(privateNames.size);
+                privateNames.set(original, replacement);
+            }
+            renameIdentifier(node, replacement, parents);
+            return node;
+        });
+    }
     return ast;
 }
 
@@ -280,11 +308,11 @@ export default class Uglifier {
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    uglify (ast: AstNode): AstNode {
+    uglify (ast: AstNode, nativeSyntax: boolean = false): AstNode {
         assert.ok(estest.isNode(ast));
 
-        if (containsModernBindings(ast)) {
-            return modernMangle(ast);
+        if (nativeSyntax || containsModernBindings(ast)) {
+            return modernMangle(ast, nativeSyntax);
         }
         return esshorten.mangle(ast);
     }

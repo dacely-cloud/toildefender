@@ -158,6 +158,7 @@ export default class Identifiers {
             }
             if (node.type == "MemberExpression" && !nodeComputed(node)) {
                 const property = childNode(node, "property");
+                if (property?.type == "PrivateIdentifier") return node;
                 assert(property?.type == "Identifier");
                 setChildNode(node, "property", { type: "Literal", value: nodeName(property) || "" });
                 setNodeComputed(node, true);

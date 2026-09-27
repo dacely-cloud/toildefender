@@ -9,6 +9,8 @@ const nodeBuiltins = new Set([
 const runtimeDependencies = [
     "@babel/parser",
     "escodegen",
+    "astring",
+    "eslint-scope",
     "escope",
     "esprima",
     "esshorten",

@@ -548,6 +548,35 @@ source bundle
 For security-sensitive browser code, pair this with server-side validation.
 Client-side protection raises cost; it does not replace server authority.
 
+## Native syntax protection
+
+For latency-sensitive modern Node/browser bundles, `nativeSyntax: true` preserves
+native private fields, class methods, iterators, and try/finally. It uses modern
+scope analysis and code generation, renames private identifiers, and encodes
+strings in bounded UTF-16 chunks. This avoids WeakMap downleveling and thousands
+of tiny string-decoder functions. Benchmarks should use the application's actual
+workloads; this is still obfuscation with runtime and size costs.
+
+Use an explicit profile because the classic feature dependency expansion enables
+scope rewriting when `literals` is selected:
+
+```js
+protect({
+    code: bundledScript,
+    nativeSyntax: true,
+    forceFeatures: {
+        dead_code: false, scope: false, control_flow: false,
+        identifiers: true, numeric_vm: false, object_packing: true,
+        literals: true, mangle: true, compress: true
+    }
+});
+```
+
+Native syntax mode rejects scope, control-flow, and numeric VM rewriting. Regexes
+and templates retain native semantics, including tagged templates. ESM bundlers
+must retain imports/exports outside the script wrapper and preserve module-level
+await (see the Nerva integration); the option is not a standalone ESM bundler.
+
 ## Security Boundary
 
 ToilDefender is code protection, not magic.

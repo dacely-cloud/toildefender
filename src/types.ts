@@ -75,6 +75,8 @@ export interface ScopeOptions {
 }
 
 export interface ToilDefenderOptions {
+    /** Preserve modern syntax for low-overhead protection without scope, control-flow, or VM rewriting. */
+    nativeSyntax?: boolean;
     babel?: boolean;
     babelPreserveAsync?: boolean;
     babelTarget?: string;

@@ -6,6 +6,8 @@ import type { AstChildVisitor, AstNode, AstStackFrame, AstVisitor } from "./type
 
 const VISITOR_KEYS = Object.assign({}, estraverse.VisitorKeys, {
     ChainExpression: [ "expression" ],
+    StaticBlock: [ "body" ],
+    ImportExpression: [ "source", "options" ],
     PropertyDefinition: [ "key", "value" ],
     FieldDefinition: [ "key", "value" ]
 }) as Record<string, string[]>;

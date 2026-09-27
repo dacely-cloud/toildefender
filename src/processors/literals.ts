@@ -34,7 +34,7 @@ function isNumericVmInternalFunction(stack: AstStackFrame[]): boolean {
 
 function isUnencodedPropertyKey(stack: AstStackFrame[]): boolean {
     const parentFrame = stack[1];
-    if (!parentFrame || parentFrame.node.type != "Property") {
+    if (!parentFrame || !["Property", "MethodDefinition", "PropertyDefinition"].includes(parentFrame.node.type)) {
         return false;
     }
     return parentFrame.key == "key" && !isComputed(parentFrame.node);
@@ -207,6 +207,24 @@ function makeStringByteArrayCall(str: string): AstNode {
     };
 }
 
+/** Encodes UTF-16 in bounded chunks without per-fragment functions or repeated string appends. */
+function makeCompactString(str: string): AstNode {
+    const chunks: AstNode[] = [];
+    for (let offset: number = 0; offset < str.length; offset += 256) {
+        chunks.push(makeStringByteArrayCall(str.slice(offset, offset + 256)));
+    }
+    return {
+        type: "CallExpression",
+        callee: {
+            type: "MemberExpression",
+            object: { type: "ArrayExpression", elements: chunks },
+            property: { type: "Identifier", name: "join" },
+            computed: false
+        },
+        arguments: [{ type: "Literal", value: "" }]
+    };
+}
+
 function makeStringExpression(str: string): AstNode {
     if (str.length == 0) {
         return { type: "Literal", value: "" };
@@ -331,7 +349,7 @@ export default class Literals {
      * @param {Node} ast Root node
      * @returns {Node} Root node
      */
-    generateStrings (ast: AstNode): AstNode {
+    generateStrings (ast: AstNode, nativeSyntax: boolean = false): AstNode {
         assert.ok(estest.isNode(ast));
         
         ast = traverser.traverse(ast, [], (node: AstNode, stack: AstStackFrame[]) => {
@@ -339,17 +357,17 @@ export default class Literals {
                 return node;
             }
             if (node.type == "TemplateLiteral") {
-                return makeTemplateExpression(node);
+                return nativeSyntax ? node : makeTemplateExpression(node);
             }
             if (node.type == "Literal" && regexInfo(node)) {
-                return makeRegexExpression(node);
+                return nativeSyntax ? node : makeRegexExpression(node);
             }
             const value = literalStringValue(node);
             if (node.type == "Literal"
                 && value !== null
                 && stack.length > 1
                 && !isUnencodedPropertyKey(stack)) {
-                return makeStringGenerator(value);
+                return nativeSyntax ? makeCompactString(value) : makeStringGenerator(value);
             }
             
             return node;
