@@ -613,6 +613,11 @@ Source lives under `src/` as TypeScript. `npm run build` runs the Vite 8 library
 build for ESM and CommonJS, then emits declaration files with
 `tsconfig.build.json`.
 
+`npm run typecheck` and the declaration emit use the TypeScript 7 compiler,
+installed as the `typescript7` alias. The `typescript` 6 package stays only for
+`npm run lint`: typescript-eslint loads the TypeScript JavaScript API, which
+TypeScript 7.0 does not ship.
+
 Generated package artifacts live under `build/` and are intentionally ignored in
 git. The root `toildefender.js` and `defendjs.js` shims load the built CLI and
 library output for package compatibility.
